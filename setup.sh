@@ -528,8 +528,57 @@ nginx_listen_directive() {
   fi
 }
 
+check_port_443() {
+  local pid=""
+  local proc_name=""
+  local answer=""
+
+  if ! port_is_listening 443; then
+    return
+  fi
+
+  pid="$(ss -H -ltnp 'sport = :443' 2>/dev/null | grep -oP 'pid=\K[0-9]+' | head -1)"
+  proc_name="$(ps -p "${pid:-0}" -o comm= 2>/dev/null || echo "unknown")"
+
+  # If it's nginx itself, that's fine — we'll reload it.
+  if [[ "$proc_name" == "nginx" ]]; then
+    return
+  fi
+
+  echo
+  echo "WARNING: port 443 is already in use by: ${proc_name} (PID ${pid})"
+  echo "Nginx needs to bind to port 443. The conflicting process must be stopped."
+  echo
+  read -r -p "Stop ${proc_name} (PID ${pid}) now? [y/N]: " answer
+
+  case "$answer" in
+    y|Y|yes|YES)
+      echo "Stopping ${proc_name} (PID ${pid})..."
+      kill "$pid" 2>/dev/null || true
+      sleep 2
+
+      if port_is_listening 443; then
+        echo "Process did not stop gracefully, sending SIGKILL..."
+        kill -9 "$pid" 2>/dev/null || true
+        sleep 1
+      fi
+
+      if port_is_listening 443; then
+        die "Port 443 is still in use. Please stop the process manually and re-run."
+      fi
+
+      echo "Port 443 is now free."
+      ;;
+    *)
+      die "Cannot proceed while port 443 is occupied by another process."
+      ;;
+  esac
+}
+
 write_nginx_config() {
   echo "[6/8] Writing Nginx reverse proxy configuration..."
+
+  check_port_443
 
   local panel_domain="${PANEL_SUBDOMAIN}.${BASE_DOMAIN}"
   local vless_domain="${VLESS_SUBDOMAIN}.${BASE_DOMAIN}"
