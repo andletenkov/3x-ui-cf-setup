@@ -484,7 +484,7 @@ map \$http_upgrade \$connection_upgrade {
     '' close;
 }
 
-limit_req_zone \$binary_remote_addr zone=panel_limit:10m rate=5r/s;
+limit_req_zone \$binary_remote_addr zone=panel_limit:10m rate=30r/s;
 
 server {
     ${listen_directive}
@@ -544,7 +544,7 @@ server {
     }
 
     location ${PANEL_PATH}/ {
-        limit_req zone=panel_limit burst=5 nodelay;
+        limit_req zone=panel_limit burst=60 nodelay;
 
         proxy_pass http://127.0.0.1:${PANEL_PORT};
 
