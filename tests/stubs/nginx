@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Stub for `nginx`. `nginx -t` succeeds unless NGINX_T_SHOULD_FAIL is set.
+# Stub for `nginx`.
+#   `nginx -t` succeeds unless NGINX_T_SHOULD_FAIL is set.
+#   `nginx -v` reports NGINX_STUB_VERSION (default: 1.24.0, pre-http2-on).
 set -eu
 
 if [[ "${1:-}" == "-t" ]]; then
@@ -8,6 +10,11 @@ if [[ "${1:-}" == "-t" ]]; then
     exit 1
   fi
   echo "nginx: configuration file test is successful" >&2
+  exit 0
+fi
+
+if [[ "${1:-}" == "-v" ]]; then
+  echo "nginx version: nginx/${NGINX_STUB_VERSION:-1.24.0}" >&2
   exit 0
 fi
 

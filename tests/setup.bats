@@ -295,16 +295,36 @@ nginx_config_env() {
   grep -q "location /api.v1.SyncService" "$NGINX_SITE"
   grep -q "server_name admin.example.com;" "$NGINX_SITE"
   grep -q "server_name vpn.example.com;" "$NGINX_SITE"
-  grep -q "listen 443 ssl;" "$NGINX_SITE"
-  grep -q "http2 on;" "$NGINX_SITE"
 }
 
-@test "write_nginx_config does not use the deprecated 'listen ... http2' syntax" {
+@test "write_nginx_config uses combined 'listen ... http2' syntax on nginx < 1.25.1" {
   nginx_config_env
+  export NGINX_STUB_VERSION=1.24.0
   run write_nginx_config
   [ "$status" -eq 0 ]
 
+  grep -q "listen 443 ssl http2;" "$NGINX_SITE"
+  ! grep -q "http2 on;" "$NGINX_SITE"
+}
+
+@test "write_nginx_config uses separate 'http2 on' directive on nginx >= 1.25.1" {
+  nginx_config_env
+  export NGINX_STUB_VERSION=1.25.1
+  run write_nginx_config
+  [ "$status" -eq 0 ]
+
+  grep -q "listen 443 ssl;" "$NGINX_SITE"
+  grep -q "http2 on;" "$NGINX_SITE"
   ! grep -q "listen 443 ssl http2;" "$NGINX_SITE"
+}
+
+@test "write_nginx_config uses separate 'http2 on' directive on nginx > 1.25.1" {
+  nginx_config_env
+  export NGINX_STUB_VERSION=1.27.0
+  run write_nginx_config
+  [ "$status" -eq 0 ]
+
+  grep -q "http2 on;" "$NGINX_SITE"
 }
 
 @test "write_nginx_config rolls back to previous config when nginx -t fails" {

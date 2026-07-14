@@ -439,6 +439,30 @@ write_cloudflare_real_ip_config() {
   fi
 }
 
+nginx_listen_directive() {
+  local version=""
+  local major=0
+  local minor=0
+  local patch=0
+
+  version="$(nginx -v 2>&1 | sed -n 's#.*nginx/\([0-9.]*\).*#\1#p')"
+
+  if [[ "$version" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+    major="${BASH_REMATCH[1]}"
+    minor="${BASH_REMATCH[2]}"
+    patch="${BASH_REMATCH[3]}"
+  fi
+
+  # `http2 on;` as a separate directive was introduced in nginx 1.25.1.
+  # Older versions only understand the combined `listen ... http2;` form.
+  if ((major > 1 || (major == 1 && minor > 25) || (major == 1 && minor == 25 && patch >= 1))); then
+    printf '%s\n' "listen 443 ssl;
+    http2 on;"
+  else
+    printf '%s\n' "listen 443 ssl http2;"
+  fi
+}
+
 write_nginx_config() {
   echo "[6/8] Writing Nginx reverse proxy configuration..."
 
@@ -448,6 +472,9 @@ write_nginx_config() {
   local tmp_nginx
   local backup=""
   local default_site_was_enabled=false
+  local listen_directive
+
+  listen_directive="$(nginx_listen_directive)"
 
   tmp_nginx="$(make_tmp_file)"
 
@@ -460,8 +487,7 @@ map \$http_upgrade \$connection_upgrade {
 limit_req_zone \$binary_remote_addr zone=panel_limit:10m rate=5r/s;
 
 server {
-    listen 443 ssl;
-    http2 on;
+    ${listen_directive}
     server_name ${vless_domain};
 
     ssl_certificate ${CERT_DIR}/fullchain.pem;
@@ -504,8 +530,7 @@ server {
 }
 
 server {
-    listen 443 ssl;
-    http2 on;
+    ${listen_directive}
     server_name ${panel_domain};
 
     ssl_certificate ${CERT_DIR}/fullchain.pem;
