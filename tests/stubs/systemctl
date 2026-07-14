@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Stub for `systemctl`. Always succeeds, does nothing.
+exit 0

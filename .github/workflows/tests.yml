@@ -1,0 +1,38 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  bats:
+    name: Bats unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Shellcheck setup.sh
+        uses: ludeeus/action-shellcheck@2.0.0
+        with:
+          scandir: '.'
+          ignore_paths: 'tests'
+
+      - name: Make setup.sh executable
+        run: chmod +x setup.sh
+
+      - name: Bash syntax check
+        run: bash -n setup.sh
+
+      - name: Install bats-core
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bats
+
+      - name: Make stubs executable
+        run: chmod +x tests/stubs/*
+
+      - name: Run tests
+        run: bats tests/setup.bats

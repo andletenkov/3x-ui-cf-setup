@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Stub for `ss`. By default reports nothing listening (grep -q . fails).
+# Set SS_LISTENING_PORTS="8080 9090" to make specific ports appear "listening".
+set -eu
+
+target_port=""
+for arg in "$@"; do
+  case "$arg" in
+    sport\ =\ :*|:*)
+      target_port="${arg##*:}"
+      ;;
+  esac
+done
+
+if [[ -z "$target_port" ]]; then
+  # try to parse "sport = :NNNN" passed as a single argument
+  for arg in "$@"; do
+    if [[ "$arg" =~ :([0-9]+)$ ]]; then
+      target_port="${BASH_REMATCH[1]}"
+    fi
+  done
+fi
+
+for p in ${SS_LISTENING_PORTS:-}; do
+  if [[ "$p" == "$target_port" ]]; then
+    echo "LISTEN 0 128 0.0.0.0:${p} 0.0.0.0:*"
+    exit 0
+  fi
+done
+
+exit 0

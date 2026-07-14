@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Stub for `apt`. Always succeeds, does nothing.
+exit 0

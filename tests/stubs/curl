@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# Stub for `curl`. Behavior is controlled via env vars so tests stay hermetic.
+#
+#   CURL_SHOULD_FAIL=1          -> non-zero exit, no output (simulates network failure)
+#   CURL_CF_IPV4="1.1.1.0/24"   -> body returned for https://www.cloudflare.com/ips-v4
+#   CURL_CF_IPV6="2400:cb00::/32" -> body returned for https://www.cloudflare.com/ips-v6
+#   CURL_HTTP_CODE=200          -> code printed when -w '%{http_code}' is used
+set -eu
+
+if [[ -n "${CURL_SHOULD_FAIL:-}" ]]; then
+  exit 1
+fi
+
+url=""
+write_out=""
+for arg in "$@"; do
+  case "$arg" in
+    http*://*) url="$arg" ;;
+    '%{http_code}') write_out="http_code" ;;
+  esac
+done
+
+if [[ "$write_out" == "http_code" ]]; then
+  printf '%s' "${CURL_HTTP_CODE:-200}"
+  exit 0
+fi
+
+case "$url" in
+  *ips-v4*) printf '%s\n' "${CURL_CF_IPV4:-1.1.1.0/24}" ;;
+  *ips-v6*) printf '%s\n' "${CURL_CF_IPV6:-2400:cb00::/32}" ;;
+  *) printf '' ;;
+esac
+
+exit 0

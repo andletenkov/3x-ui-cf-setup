@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Stub for `ufw`. Logs invocations to $UFW_LOG (if set) and always succeeds.
+set -eu
+
+if [[ -n "${UFW_LOG:-}" ]]; then
+  echo "ufw $*" >> "$UFW_LOG"
+fi
+
+exit 0

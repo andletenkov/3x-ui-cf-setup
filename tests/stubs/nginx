@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Stub for `nginx`. `nginx -t` succeeds unless NGINX_T_SHOULD_FAIL is set.
+set -eu
+
+if [[ "${1:-}" == "-t" ]]; then
+  if [[ -n "${NGINX_T_SHOULD_FAIL:-}" ]]; then
+    echo "nginx: [emerg] stub failure" >&2
+    exit 1
+  fi
+  echo "nginx: configuration file test is successful" >&2
+  exit 0
+fi
+
+exit 0
