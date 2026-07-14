@@ -319,7 +319,7 @@ collect_input() {
   echo
   prompt WS_PATH "WebSocket path" "$WS_PATH"
   prompt GRPC_SERVICE "gRPC service name" "$GRPC_SERVICE"
-  prompt SUB_PATH "Subscription path" "$SUB_PATH"
+  prompt SUB_PATH "Subscription path (appended to panel path, e.g. <panel-path>/sub)" "$SUB_PATH"
 
   if [[ -z "${CLOUDFLARE_API_TOKEN:-}" ]]; then
     echo
