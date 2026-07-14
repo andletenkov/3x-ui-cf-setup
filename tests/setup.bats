@@ -290,11 +290,23 @@ nginx_config_env() {
 
   grep -q "proxy_pass http://127.0.0.1:10001;" "$NGINX_SITE"
   grep -q "grpc_pass grpc://127.0.0.1:10002;" "$NGINX_SITE"
-  grep -q "proxy_pass http://127.0.0.1:2053/;" "$NGINX_SITE"
+  grep -q "proxy_pass http://127.0.0.1:2053;" "$NGINX_SITE"
   grep -q "location = /api/v1/events" "$NGINX_SITE"
   grep -q "location /api.v1.SyncService" "$NGINX_SITE"
   grep -q "server_name admin.example.com;" "$NGINX_SITE"
   grep -q "server_name vpn.example.com;" "$NGINX_SITE"
+}
+
+@test "write_nginx_config's panel proxy_pass has no trailing slash (preserves base path prefix)" {
+  # A trailing slash on proxy_pass's target URI makes nginx strip the matched
+  # location prefix before forwarding, which breaks apps (like 3x-ui) whose
+  # base path routing expects to see the full original path.
+  nginx_config_env
+  run write_nginx_config
+  [ "$status" -eq 0 ]
+
+  grep -q "proxy_pass http://127.0.0.1:2053;" "$NGINX_SITE"
+  ! grep -q "proxy_pass http://127.0.0.1:2053/;" "$NGINX_SITE"
 }
 
 @test "write_nginx_config uses combined 'listen ... http2' syntax on nginx < 1.25.1" {
