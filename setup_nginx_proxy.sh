@@ -1099,6 +1099,7 @@ main() {
   require_root
   load_config
   collect_input
+  save_config
 
   CERT_DIR="/etc/letsencrypt/live/${BASE_DOMAIN}"
 
