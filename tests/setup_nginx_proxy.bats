@@ -114,7 +114,6 @@ valid_inputs() {
   VLESS_SUBDOMAIN="vpn"
   PANEL_PATH="/my-admin"
   EMAIL="user@example.com"
-  SSH_PORT="22"
   PANEL_PORT="2053"
   SUB_PORT="2096"
   WS_PORT="10001"
@@ -162,14 +161,6 @@ valid_inputs() {
   [[ "$output" == *"Invalid gRPC service"* ]]
 }
 
-@test "validate_inputs rejects SSH port 443" {
-  valid_inputs
-  SSH_PORT="443"
-  run validate_inputs
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"SSH port cannot be 443"* ]]
-}
-
 @test "validate_inputs rejects equal websocket and grpc ports" {
   valid_inputs
   GRPC_PORT="$WS_PORT"
@@ -192,15 +183,6 @@ valid_inputs() {
   run validate_inputs
   [ "$status" -eq 1 ]
   [[ "$output" == *"cannot be 443"* ]]
-}
-
-@test "validate_inputs rejects grpc port equal to SSH port" {
-  valid_inputs
-  SSH_PORT="2222"
-  GRPC_PORT="2222"
-  run validate_inputs
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"same as the SSH port"* ]]
 }
 
 # ---------------------------------------------------------------------------
@@ -232,15 +214,6 @@ valid_inputs() {
   run validate_panel_port
   [ "$status" -eq 1 ]
   [[ "$output" == *"reserved for the public HTTPS listener"* ]]
-}
-
-@test "validate_panel_port rejects collision with SSH_PORT" {
-  valid_inputs
-  SSH_PORT="2222"
-  PANEL_PORT="2222"
-  run validate_panel_port
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"collides with SSH_PORT"* ]]
 }
 
 @test "validate_panel_port rejects collision with WS_PORT" {
@@ -305,11 +278,10 @@ valid_inputs() {
 }
 
 @test "random_free_port avoids an arbitrary number of excluded ports" {
-  # Exercises the >2-argument exclusion list added for PANEL_PORT reservation
-  # (SSH_PORT, 443, SUB_PORT, WS_PORT, GRPC_PORT all excluded at once).
+  # Exercises the >2-argument exclusion list used for PANEL_PORT reservation
+  # (443, SUB_PORT, WS_PORT, GRPC_PORT all excluded at once).
   for i in $(seq 1 20); do
-    port="$(random_free_port 22 443 2096 51000 51500)"
-    [ "$port" != "22" ]
+    port="$(random_free_port 443 2096 51000 51500)"
     [ "$port" != "443" ]
     [ "$port" != "2096" ]
     [ "$port" != "51000" ]
@@ -593,7 +565,6 @@ EOF
   WS_PATH="/api/v1/events"
   GRPC_PORT="51236"
   GRPC_SERVICE="api.v1.SyncService"
-  SSH_PORT="22"
   SUB_PORT="2096"
   CLIENT_UUID=""
   BASE_DOMAIN="example.com"
@@ -629,7 +600,6 @@ EOF
   WS_PATH="/api/v1/events"
   GRPC_PORT="51236"
   GRPC_SERVICE="api.v1.SyncService"
-  SSH_PORT="22"
   SUB_PORT="2096"
   CLIENT_UUID=""
   BASE_DOMAIN="example.com"
@@ -655,7 +625,6 @@ EOF
   WS_PATH="/api/v1/events"
   GRPC_PORT="51236"
   GRPC_SERVICE="api.v1.SyncService"
-  SSH_PORT="22"
   SUB_PORT="2096"
   CLIENT_UUID=""
   BASE_DOMAIN="example.com"
@@ -691,7 +660,6 @@ EOF
   WS_PATH="/api/v1/events"
   GRPC_PORT="51236"
   GRPC_SERVICE="api.v1.SyncService"
-  SSH_PORT="22"
   SUB_PORT="2096"
   CLIENT_UUID=""
 
@@ -737,7 +705,6 @@ EOF
   WS_PATH="/api/v1/events"
   GRPC_PORT="51236"
   GRPC_SERVICE="api.v1.SyncService"
-  SSH_PORT="22"
   SUB_PORT="2096"
   CLIENT_UUID=""
   XUI_VERSION="v3.4.0"
@@ -781,7 +748,6 @@ setup_uninstall_fixtures() {
   CERTBOT_DEPLOY_HOOK="${BATS_TEST_TMPDIR}/nginx-reload.sh"
   CF_CREDENTIALS="${BATS_TEST_TMPDIR}/cloudflare.ini"
   BASE_DOMAIN="example.com"
-  SSH_PORT="22"
   PANEL_PORT="51234"
   SUB_PORT="2096"
   WS_PORT="51235"
@@ -832,7 +798,6 @@ setup_uninstall_fixtures() {
   run uninstall_all <<< "y"
   [ "$status" -eq 0 ]
 
-  grep -q "delete allow 22/tcp" "$UFW_LOG"
   grep -q "delete allow 443/tcp" "$UFW_LOG"
   grep -q "delete deny 80/tcp" "$UFW_LOG"
   grep -q "delete deny 51234/tcp" "$UFW_LOG"

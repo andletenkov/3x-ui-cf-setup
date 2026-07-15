@@ -6,8 +6,6 @@ PANEL_SUBDOMAIN="admin"
 VLESS_SUBDOMAIN="vpn"
 PANEL_PATH="/my-admin"
 EMAIL=""
-SSH_PORT="22"
-
 PANEL_PORT=""
 SUB_PORT=""
 WS_PORT=""
@@ -85,7 +83,6 @@ PANEL_SUBDOMAIN="${PANEL_SUBDOMAIN}"
 VLESS_SUBDOMAIN="${VLESS_SUBDOMAIN}"
 PANEL_PATH="${PANEL_PATH}"
 EMAIL="${EMAIL}"
-SSH_PORT="${SSH_PORT}"
 PANEL_PORT="${PANEL_PORT}"
 SUB_PORT="${SUB_PORT}"
 WS_PORT="${WS_PORT}"
@@ -246,13 +243,9 @@ validate_inputs() {
   [[ "$GRPC_SERVICE" =~ ^[A-Za-z0-9._-]+$ ]] ||
     die "Invalid gRPC service name."
 
-  validate_port "SSH port" "$SSH_PORT"
   validate_port "Subscription port" "$SUB_PORT"
   validate_port "WebSocket port" "$WS_PORT"
   validate_port "gRPC port" "$GRPC_PORT"
-
-  [[ "$SSH_PORT" != "443" ]] ||
-    die "SSH port cannot be 443."
 
   [[ "$SUB_PORT" != "$WS_PORT" ]] ||
     die "Subscription and WebSocket ports must be different."
@@ -275,9 +268,6 @@ validate_inputs() {
 
     [[ "$internal_port" != "443" ]] ||
       die "${internal_port_name} cannot be 443 (reserved for the public HTTPS listener)."
-
-    [[ "$internal_port" != "$SSH_PORT" ]] ||
-      die "${internal_port_name} cannot be the same as the SSH port."
   done
 
   normalize_ws_path
@@ -295,9 +285,6 @@ validate_panel_port() {
 
   [[ "$PANEL_PORT" != "443" ]] ||
     die "3x-ui panel port is 443, reserved for the public HTTPS listener. Change it via 'x-ui setting -port <port>' on the server, then re-run this script."
-
-  [[ "$PANEL_PORT" != "$SSH_PORT" ]] ||
-    die "3x-ui panel port ${PANEL_PORT} collides with SSH_PORT. Change it via 'x-ui setting -port <port>' on the server, then re-run this script."
 
   [[ "$PANEL_PORT" != "$WS_PORT" ]] ||
     die "3x-ui panel port ${PANEL_PORT} collides with WS_PORT. Change it via 'x-ui setting -port <port>' on the server, then re-run this script."
@@ -323,7 +310,6 @@ collect_input() {
   prompt PANEL_SUBDOMAIN "Panel subdomain" "$PANEL_SUBDOMAIN"
   prompt VLESS_SUBDOMAIN "VLESS subdomain" "$VLESS_SUBDOMAIN"
   prompt EMAIL "Let's Encrypt email" "$EMAIL"
-  prompt SSH_PORT "SSH port" "$SSH_PORT"
 
   echo
   echo "Note: 3x-ui's username/password/path are generated securely by the 3x-ui"
@@ -354,7 +340,7 @@ collect_input() {
   # Reserve the panel port here too, BEFORE 3x-ui is installed, so it cannot
   # collide with any port already claimed above. Reused as-is on reruns
   # (loaded from CONFIG_FILE by load_config) so it stays stable.
-  PANEL_PORT="${PANEL_PORT:-$(random_free_port "$SSH_PORT" "443" "$SUB_PORT" "$WS_PORT" "$GRPC_PORT")}"
+  PANEL_PORT="${PANEL_PORT:-$(random_free_port "443" "$SUB_PORT" "$WS_PORT" "$GRPC_PORT")}"
   validate_port "Panel port" "$PANEL_PORT"
 
   if port_is_listening "$PANEL_PORT"; then
@@ -407,7 +393,7 @@ confirm_configuration() {
   echo "  internal port: ${SUB_PORT}"
   echo
   echo "Firewall:"
-  echo "  allowed: ${SSH_PORT}/tcp, 443/tcp"
+  echo "  allowed: 443/tcp (SSH is left untouched by this script)"
   echo "  denied: 80/tcp, ${PANEL_PORT}/tcp, ${SUB_PORT}/tcp, ${WS_PORT}/tcp, ${GRPC_PORT}/tcp"
   echo
 
@@ -806,7 +792,12 @@ configure_ufw() {
     fi
   done
 
-  ufw allow "${SSH_PORT}/tcp"
+  # Deliberately does NOT touch SSH (allow/deny) at all -- this script only
+  # owns the panel/proxy-related ports. Managing the SSH rule here risked a
+  # lockout (enabling UFW without an SSH allow rule already in place, or
+  # deleting the wrong one on --uninstall) for something entirely unrelated
+  # to this script's job. If SSH isn't already reachable through UFW on this
+  # host, allow it yourself, e.g.: ufw allow 22/tcp
   ufw allow 443/tcp
 
   ufw deny 80/tcp || true
@@ -859,9 +850,8 @@ print_summary() {
   echo "  internal port: ${SUB_PORT}"
   echo
   echo "UFW:"
-  echo "  allowed: ${SSH_PORT}/tcp, 443/tcp"
+  echo "  allowed: 443/tcp (SSH is left untouched by this script)"
   echo "  denied: 80/tcp, ${PANEL_PORT}/tcp, ${SUB_PORT}/tcp, ${WS_PORT}/tcp, ${GRPC_PORT}/tcp"
-  echo "  22/tcp was NOT opened unless you selected port 22."
   echo
   echo "Files:"
   echo "  Nginx site: ${NGINX_SITE}"
@@ -1062,7 +1052,8 @@ uninstall_all() {
 
   echo "--- UFW ---"
   if command -v ufw >/dev/null 2>&1; then
-    [[ -n "${SSH_PORT:-}" ]] && ufw delete allow "${SSH_PORT}/tcp" >/dev/null 2>&1 || true
+    # SSH is never touched -- this script never added an SSH rule, so it
+    # never removes one either (see configure_ufw).
     ufw delete allow 443/tcp >/dev/null 2>&1 || true
     ufw delete deny 80/tcp >/dev/null 2>&1 || true
     for p in "${PANEL_PORT:-}" "${SUB_PORT:-}" "${WS_PORT:-}" "${GRPC_PORT:-}"; do

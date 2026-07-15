@@ -19,7 +19,7 @@ bats tests/setup_nginx_proxy.bats
   rejection, character whitelist (`^/[A-Za-z0-9/_-]*$`)
 - `validate_inputs` — domain/email/service-name regexes, and all the
   port-collision rules (panel/ws/grpc mutually distinct, none equal to 443,
-  none equal to SSH port)
+  none equal to 443)
 - `port_is_listening` / `random_free_port` — driven by the `ss` stub via the
   `SS_LISTENING_PORTS` env var
 - `write_nginx_config` — correct interpolation of ports/paths/domains, the
@@ -30,8 +30,8 @@ bats tests/setup_nginx_proxy.bats
   failure
 - `prompt` — default-value fallback, custom value, and "value required" retry
   loop
-- `validate_panel_port` — the post-3x-ui-install collision re-check (443/SSH/
-  WS/gRPC/Subscription) and `PANEL_PATH` normalization
+- `validate_panel_port` — the post-3x-ui-install collision re-check
+  (443/WS/gRPC/Subscription) and `PANEL_PATH` normalization
 - `print_client_links` — panel credentials output and both `vless://` URIs
   (TLS, correct host, shared client UUID)
 - `install_3xui_and_inbounds` — stubs `install-3xui.sh` via `INSTALL_3XUI_SCRIPT`

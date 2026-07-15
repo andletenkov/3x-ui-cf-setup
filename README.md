@@ -18,7 +18,7 @@ Two scripts:
 3x-ui itself is the source of truth for its username/password/web-base-path
 (generated securely by its own installer); `setup_nginx_proxy.sh` only
 pre-reserves the panel **port** up front so it can't collide with the
-WS/gRPC/Subscription/SSH ports it also owns.
+WS/gRPC/Subscription ports it also owns.
 
 ## Architecture
 
@@ -28,7 +28,7 @@ flowchart TD
     CF -->|"HTTPS :443"| Nginx["Nginx :443 (TLS)"]
 
     subgraph VPS["VPS"]
-        UFW["UFW: allow SSH_PORT, 443 · deny 80, PANEL_PORT, WS_PORT, GRPC_PORT"]
+        UFW["UFW: allow 443 · deny 80, PANEL_PORT, WS_PORT, GRPC_PORT (SSH untouched)"]
         Nginx
         Panel["3x-ui panel — 127.0.0.1:PANEL_PORT"]
         WS["Xray WS inbound — 127.0.0.1:WS_PORT"]
@@ -69,10 +69,15 @@ sudo ./setup_nginx_proxy.sh
 (`install-3xui.sh` must sit next to `setup_nginx_proxy.sh` — it's invoked
 automatically, not downloaded separately.)
 
-You'll be prompted for the base domain, subdomains, email, SSH port,
-internal ports (WS/gRPC/panel default to random free ports), WS path, gRPC
-service name, and your Cloudflare API token. A summary is shown before
-anything is changed on disk.
+You'll be prompted for the base domain, subdomains, email, internal ports
+(WS/gRPC/panel default to random free ports), WS path, gRPC service name,
+and your Cloudflare API token. A summary is shown before anything is changed
+on disk.
+
+**Note:** this script never touches SSH (no port prompt, no UFW rule for
+it) — that's entirely outside its scope. Make sure SSH is already reachable
+through UFW on your host (`ufw allow <ssh-port>/tcp`) before it enables UFW,
+or you may need console/provider access to fix a lockout.
 
 During the run, 3x-ui is installed unattended (or reused if already
 installed) and the WS/gRPC inbounds are created automatically via its panel
@@ -116,7 +121,6 @@ Nginx/UFW/certs.
 | `PANEL_SUBDOMAIN` | `admin` | Prompted. Must differ from `VLESS_SUBDOMAIN` |
 | `VLESS_SUBDOMAIN` | `vpn` | Prompted. Must differ from `PANEL_SUBDOMAIN` |
 | `EMAIL` | — | Prompted. Let's Encrypt contact |
-| `SSH_PORT` | `22` | Prompted. Can't be `443`; internal ports can't equal this |
 | `SUB_PORT` | `2096` | Prompted. Internal subscription port |
 | `WS_PORT` | random | Prompted (defaults to a random free port). Internal Xray WS port |
 | `GRPC_PORT` | random | Prompted (defaults to a random free port). Internal Xray gRPC port |
@@ -125,14 +129,16 @@ Nginx/UFW/certs.
 | `SUB_PATH` | `/sub` | Prompted |
 | `CLOUDFLARE_API_TOKEN` | — | Prompted (hidden) unless already exported |
 | `XUI_VERSION` | latest stable | Env var only (not prompted). 3x-ui release tag, e.g. `v3.4.0`, or `dev-latest`. Ignored if 3x-ui is already installed |
-| `PANEL_PORT` | random | **Not prompted.** Reserved by `setup_nginx_proxy.sh` itself (excluded from `SSH_PORT`/`443`/`SUB_PORT`/`WS_PORT`/`GRPC_PORT`) and handed to the 3x-ui installer as `XUI_PANEL_PORT` |
+| `PANEL_PORT` | random | **Not prompted.** Reserved by `setup_nginx_proxy.sh` itself (excluded from `443`/`SUB_PORT`/`WS_PORT`/`GRPC_PORT`) and handed to the 3x-ui installer as `XUI_PANEL_PORT` |
 | `PANEL_PATH` | random | **Not prompted.** Generated securely by the 3x-ui installer itself (`XUI_WEB_BASE_PATH`) |
 | 3x-ui username/password | random | **Not prompted or settable here.** Generated securely by the 3x-ui installer, printed at the end of the run |
 
 `PANEL_PORT`/`SUB_PORT`/`WS_PORT`/`GRPC_PORT` must all differ from each
-other, from `443`, and from `SSH_PORT`. `PANEL_PORT` itself is only known
-after 3x-ui installs (see [Usage](#usage)) — `setup_nginx_proxy.sh`
-re-validates it doesn't collide with any of the above once reported back.
+other and from `443`. `PANEL_PORT` itself is only known after 3x-ui
+installs (see [Usage](#usage)) — `setup_nginx_proxy.sh` re-validates it
+doesn't collide with any of the above once reported back. SSH is entirely
+out of scope for this script (see the note in [Usage](#usage)) — no port is
+prompted for it and no UFW rule is added or removed for it.
 
 ## Generated files
 
@@ -177,7 +183,7 @@ shellcheck + these tests on every push/PR to `main`.
 | Panel returns 502 | `ss -lntp \| grep PANEL_PORT` — is 3x-ui actually listening there? |
 | VLESS client can't connect | Confirm Xray is bound to `127.0.0.1` on the exact `WS_PORT`/`GRPC_PORT`, with matching `WS_PATH`/`GRPC_SERVICE` |
 | Certificate issuance fails | Check the Cloudflare token's permissions and `/var/log/letsencrypt/letsencrypt.log` |
-| Locked out over SSH | The script only manages UFW rules — it doesn't touch `sshd_config` |
+| Locked out over SSH | This script never manages SSH's UFW rule at all (by design, see [Usage](#usage)) — check whether SSH was reachable through UFW *before* running this script |
 
 Useful commands (also printed at the end of every run):
 
