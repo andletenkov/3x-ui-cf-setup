@@ -349,11 +349,22 @@ collect_input() {
 
   echo
   # Auto-generate WS_PATH, GRPC_SERVICE, and SUB_PATH if not already set
-  # (loaded from CONFIG_FILE on reruns). These are security-sensitive: they
-  # act as shared secrets (anyone who guesses the path can connect).
-  WS_PATH="${WS_PATH:-/$(openssl rand -hex 8)}"
-  GRPC_SERVICE="${GRPC_SERVICE:-svc_$(openssl rand -hex 8)}"
-  SUB_PATH="${SUB_PATH:-/$(openssl rand -hex 8)}"
+  # (loaded from CONFIG_FILE on reruns). These are security-sensitive but
+  # must look like plausible real API endpoints to avoid standing out.
+  if [[ -z "$WS_PATH" ]]; then
+    local ws_words=(events stream messages notifications updates sync relay)
+    WS_PATH="/api/v$(( RANDOM % 3 + 1 ))/${ws_words[RANDOM % ${#ws_words[@]}]}/$(openssl rand -hex 4)"
+  fi
+  if [[ -z "$GRPC_SERVICE" ]]; then
+    local grpc_orgs=(internal backend core cloud platform service)
+    local grpc_pkgs=(sync relay push telemetry health streaming)
+    local grpc_svcs=(SyncService RelayService PushService EventService DataService StreamService)
+    GRPC_SERVICE="com.${grpc_orgs[RANDOM % ${#grpc_orgs[@]}]}.${grpc_pkgs[RANDOM % ${#grpc_pkgs[@]}]}.v$(( RANDOM % 3 + 1 )).${grpc_svcs[RANDOM % ${#grpc_svcs[@]}]}"
+  fi
+  if [[ -z "$SUB_PATH" ]]; then
+    local sub_words=(feed config subscription profile account settings)
+    SUB_PATH="/api/v$(( RANDOM % 3 + 1 ))/${sub_words[RANDOM % ${#sub_words[@]}]}/$(openssl rand -hex 4)"
+  fi
 
   if [[ -z "${CLOUDFLARE_API_TOKEN:-}" ]]; then
     echo
