@@ -14,17 +14,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Shellcheck setup.sh
+      - name: Shellcheck setup_nginx_proxy.sh
         uses: ludeeus/action-shellcheck@2.0.0
         with:
           scandir: '.'
           ignore_paths: 'tests'
 
-      - name: Make setup.sh executable
-        run: chmod +x setup.sh
+      - name: Make setup_nginx_proxy.sh executable
+        run: chmod +x setup_nginx_proxy.sh
 
       - name: Bash syntax check
-        run: bash -n setup.sh
+        run: bash -n setup_nginx_proxy.sh
 
       - name: Install bats-core
         run: |
@@ -35,4 +35,4 @@ jobs:
         run: chmod +x tests/stubs/*
 
       - name: Run tests
-        run: bats tests/setup.bats
+        run: bats tests/setup_nginx_proxy.bats

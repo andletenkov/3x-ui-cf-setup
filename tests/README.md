@@ -1,15 +1,15 @@
-# Tests for setup.sh
+# Tests for setup_nginx_proxy.sh
 
 Unit tests using [bats-core](https://github.com/bats-core/bats-core). No root
 privileges or real system changes required — every system-mutating command
 (`nginx`, `curl`, `ss`, `ufw`, `certbot`, `systemctl`, `apt`) is stubbed out
-via `tests/stubs/`, which is prepended to `PATH` before `setup.sh` is sourced.
+via `tests/stubs/`, which is prepended to `PATH` before `setup_nginx_proxy.sh` is sourced.
 
 ## Running
 
 ```bash
 brew install bats-core   # or: apt install bats
-bats tests/setup.bats
+bats tests/setup_nginx_proxy.bats
 ```
 
 ## What's covered
@@ -30,6 +30,17 @@ bats tests/setup.bats
   failure
 - `prompt` — default-value fallback, custom value, and "value required" retry
   loop
+- `validate_panel_port` — the post-3x-ui-install collision re-check (443/SSH/
+  WS/gRPC/Subscription) and `PANEL_PATH` normalization
+- `print_client_links` — panel credentials output and both `vless://` URIs
+  (TLS, correct host, shared client UUID)
+- `install_3xui_and_inbounds` — stubs `install-3xui.sh` via `INSTALL_3XUI_SCRIPT`
+  to verify PANEL_PORT is forwarded unchanged, output is parsed correctly,
+  `XUI_VERSION` is forwarded, and failure/collision paths `die` cleanly
+- `uninstall_all` (`--uninstall`) — removes the Nginx site, Cloudflare
+  real-IP config, Certbot hook/cert, Cloudflare credentials, this script's
+  UFW rules, and delegates to `install-3xui.sh --uninstall`; cancels cleanly
+  without touching anything if not confirmed
 
 ## What's intentionally NOT unit tested
 
@@ -39,7 +50,7 @@ bats tests/setup.bats
   smoke-tested manually or in a disposable VM/container against a throwaway
   Cloudflare-managed test domain, not covered by this unit suite.
 - `main()` itself — it is guarded by a `BASH_SOURCE` check so that sourcing
-  `setup.sh` for tests does not trigger a real run.
+  `setup_nginx_proxy.sh` for tests does not trigger a real run.
 
 ## Stubs
 

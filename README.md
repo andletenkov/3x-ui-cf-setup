@@ -3,14 +3,22 @@
 ![Tests](https://github.com/andletenkov/3x-ui-nginx-proxy/actions/workflows/tests.yml/badge.svg)
 ![License](https://img.shields.io/github/license/andletenkov/3x-ui-nginx-proxy)
 
-Interactive setup script that puts **Nginx** in front of an existing
-**3x-ui** panel and **Xray** inbounds, behind **Cloudflare**, with a
-**Let's Encrypt wildcard certificate** (DNS-01) and a locked-down **UFW**
-firewall.
+Interactive setup that installs **3x-ui** (unattended) and puts **Nginx** in
+front of its panel and VLESS/WS + VLESS/gRPC **Xray** inbounds, behind
+**Cloudflare**, with a **Let's Encrypt wildcard certificate** (DNS-01) and a
+locked-down **UFW** firewall.
 
-It does **not** install or configure 3x-ui/Xray themselves — only the
-reverse proxy, TLS, firewall, and Cloudflare real-IP restoration in front of
-them.
+Two scripts:
+
+| Script | Responsibility |
+|---|---|
+| `install-3xui.sh` | Installs 3x-ui unattended (or reuses an existing install), creates the WS/gRPC inbounds via the panel API. Invoked automatically by `setup_nginx_proxy.sh` — not normally run by hand. |
+| `setup_nginx_proxy.sh` | Everything else: Nginx reverse proxy, TLS, UFW, Cloudflare real-IP restoration. Calls `install-3xui.sh` as part of its flow. |
+
+3x-ui itself is the source of truth for its username/password/web-base-path
+(generated securely by its own installer); `setup_nginx_proxy.sh` only
+pre-reserves the panel **port** up front so it can't collide with the
+WS/gRPC/Subscription/SSH ports it also owns.
 
 ## Architecture
 
@@ -47,23 +55,58 @@ Everything else on either domain returns `404`.
 - Debian/Ubuntu VPS, run as root.
 - Domain managed by Cloudflare.
 - Cloudflare API token with `Zone:DNS:Edit` on that zone.
-- 3x-ui already installed, with panel/WS/gRPC inbounds bound to `127.0.0.1`
-  (not `0.0.0.0`).
+- Nothing else — 3x-ui is installed for you (unattended) if not already
+  present.
 
 ## Usage
 
 ```bash
-wget -O setup.sh https://raw.githubusercontent.com/andletenkov/3x-ui-nginx-proxy/main/setup.sh && chmod +x setup.sh && sudo ./setup.sh
+git clone https://github.com/andletenkov/3x-ui-nginx-proxy.git && cd 3x-ui-nginx-proxy
+chmod +x setup_nginx_proxy.sh install-3xui.sh
+sudo ./setup_nginx_proxy.sh
 ```
 
-You'll be prompted for the base domain, subdomains, panel path, email, SSH
-port, internal ports (WS/gRPC default to random free ports), WS path, gRPC
+(`install-3xui.sh` must sit next to `setup_nginx_proxy.sh` — it's invoked
+automatically, not downloaded separately.)
+
+You'll be prompted for the base domain, subdomains, email, SSH port,
+internal ports (WS/gRPC/panel default to random free ports), WS path, gRPC
 service name, and your Cloudflare API token. A summary is shown before
 anything is changed on disk.
 
-At the end, the script asks you to go configure 3x-ui/Xray to match the
-printed ports/paths, then optionally runs a live check (internal ports
-listening + public HTTPS reachability).
+During the run, 3x-ui is installed unattended (or reused if already
+installed) and the WS/gRPC inbounds are created automatically via its panel
+API — no manual copy-pasting of inbound JSON. The generated panel
+username/password are printed at the end, along with ready-to-import
+`vless://` client links. The script then optionally runs a live check
+(internal ports listening + public HTTPS reachability).
+
+### Pinning the 3x-ui version
+
+```bash
+sudo XUI_VERSION=v3.4.0 ./setup_nginx_proxy.sh
+```
+
+Unset (default) installs the latest stable 3x-ui release. `dev-latest` is
+also accepted (rolling pre-release build). Only used on a fresh 3x-ui
+install — ignored if 3x-ui is already installed on the host.
+
+### Uninstalling
+
+```bash
+sudo ./setup_nginx_proxy.sh --uninstall
+```
+
+Removes everything both scripts set up: the Nginx site and Cloudflare
+real-IP config, the Certbot deploy hook and certificate for `BASE_DOMAIN`,
+the Cloudflare API token file, the UFW rules this script added, 3x-ui itself
+(service, binary, `/etc/x-ui`, `/usr/local/x-ui`), and the saved
+config/state files. Asks for confirmation first. Safe to run even if some
+pieces were never installed.
+
+`install-3xui.sh --uninstall` can also be run directly to remove just 3x-ui
+(service, binary, `/etc/x-ui`, `/usr/local/x-ui`) without touching
+Nginx/UFW/certs.
 
 ## Configuration reference
 
@@ -113,7 +156,7 @@ overwritten.
 ```bash
 brew install bats-core   # or: apt install bats
 chmod +x tests/stubs/*
-bats tests/setup.bats
+bats tests/setup_nginx_proxy.bats
 ```
 
 See [`tests/README.md`](tests/README.md) for coverage details. CI

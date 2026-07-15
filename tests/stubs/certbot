@@ -1,3 +1,9 @@
 #!/usr/bin/env bash
-# Stub for `certbot`. Always succeeds, does nothing.
+# Stub for `certbot`. Logs invocations to $CERTBOT_LOG (if set) and always succeeds.
+set -eu
+
+if [[ -n "${CERTBOT_LOG:-}" ]]; then
+  echo "certbot $*" >> "$CERTBOT_LOG"
+fi
+
 exit 0
