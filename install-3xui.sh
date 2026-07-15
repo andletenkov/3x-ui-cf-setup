@@ -243,35 +243,37 @@ xui_add_inbound() {
   # Per the 3x-ui API docs, settings/streamSettings/sniffing should be
   # nested JSON objects (preferred), not JSON-encoded strings.
   local json_body
-  json_body="$(python3 -c "
-import json,sys
+  export REMARK="$remark" PORT="$port" TAG="$tag" UUID="$CLIENT_UUID" EMAIL="$client_email" STREAM="$stream_settings" SUBID="$CLIENT_SUB_ID"
+  json_body="$(python3 << 'JSONEOF'
+import json,os
 print(json.dumps({
     'up': 0,
     'down': 0,
     'total': 0,
-    'remark': sys.argv[1],
+    'remark': os.environ['REMARK'],
     'enable': True,
     'expiryTime': 0,
     'listen': '127.0.0.1',
-    'port': int(sys.argv[2]),
+    'port': int(os.environ['PORT']),
     'protocol': 'vless',
-    'tag': sys.argv[3],
+    'tag': os.environ['TAG'],
     'settings': {
         'clients': [{
-            'id': sys.argv[4],
-            'email': sys.argv[5],
-            'subId': sys.argv[7],
+            'id': os.environ['UUID'],
+            'email': os.environ['EMAIL'],
+            'subId': os.environ['SUBID'],
         }],
         'decryption': 'none',
         'fallbacks': [],
     },
-    'streamSettings': json.loads(sys.argv[6]),
+    'streamSettings': json.loads(os.environ['STREAM']),
     'sniffing': {
         'enabled': True,
         'destOverride': ['http', 'tls'],
     },
 }))
-" "$remark" "$port" "$tag" "$CLIENT_UUID" "$client_email" "$stream_settings" "$CLIENT_SUB_ID")"
+JSONEOF
+  )"
 
   local resp
   resp="$(api_curl -X POST "${BASE_URL}/panel/api/inbounds/add" \
@@ -301,14 +303,16 @@ ensure_ws_inbound() {
   fi
 
   local stream_settings
-  stream_settings="$(python3 -c "
-import json,sys
+  export WS_PATH_ARG="$WS_PATH"
+  stream_settings="$(python3 << 'WSEOF'
+import json,os
 print(json.dumps({
     'network': 'ws',
     'security': 'none',
-    'wsSettings': {'acceptProxyProtocol': False, 'path': sys.argv[1], 'host': '', 'headers': {}},
+    'wsSettings': {'acceptProxyProtocol': False, 'path': os.environ['WS_PATH_ARG'], 'host': '', 'headers': {}},
 }))
-" "$WS_PATH")"
+WSEOF
+  )"
 
   echo "Creating inbound '${tag}' (WS, port ${WS_PORT}, path ${WS_PATH})..." >&2
   xui_add_inbound "$WS_PORT" "$tag" "ws-cdn" "$stream_settings" "client"
@@ -323,14 +327,16 @@ ensure_grpc_inbound() {
   fi
 
   local stream_settings
-  stream_settings="$(python3 -c "
-import json,sys
+  export GRPC_SVC="$GRPC_SERVICE"
+  stream_settings="$(python3 << 'GRPCEOF'
+import json,os
 print(json.dumps({
     'network': 'grpc',
     'security': 'none',
-    'grpcSettings': {'serviceName': sys.argv[1], 'multiMode': False},
+    'grpcSettings': {'serviceName': os.environ['GRPC_SVC'], 'multiMode': False},
 }))
-" "$GRPC_SERVICE")"
+GRPCEOF
+  )"
 
   echo "Creating inbound '${tag}' (gRPC, port ${GRPC_PORT}, serviceName ${GRPC_SERVICE})..." >&2
   xui_add_inbound "$GRPC_PORT" "$tag" "grpc-cdn" "$stream_settings" "client"
@@ -360,21 +366,23 @@ configure_subscription() {
   current_settings="$(api_curl -X POST "${BASE_URL}/panel/api/setting/all")"
 
   local updated_settings
-  updated_settings="$(python3 -c "
-import json,sys
+  export CUR_SETTINGS="$current_settings" SUB_PORT_ARG="$SUB_PORT" SUB_PATH_ARG="$SUB_PATH"
+  updated_settings="$(python3 << 'SUBEOF'
+import json,os,sys
 
-resp = json.loads(sys.argv[1])
+resp = json.loads(os.environ['CUR_SETTINGS'])
 if not resp.get('success'):
     print('Failed to fetch current settings:', resp.get('msg',''), file=sys.stderr)
     sys.exit(1)
 
 settings = resp.get('obj') or {}
 settings['subEnable'] = True
-settings['subPort'] = int(sys.argv[2])
-settings['subPath'] = sys.argv[3].lstrip('/')
+settings['subPort'] = int(os.environ['SUB_PORT_ARG'])
+settings['subPath'] = os.environ['SUB_PATH_ARG'].lstrip('/')
 settings['subListen'] = '127.0.0.1'
 print(json.dumps(settings))
-" "$current_settings" "$SUB_PORT" "$SUB_PATH")" ||
+SUBEOF
+  )" ||
     die "Failed to prepare subscription settings."
 
   local resp
@@ -410,9 +418,12 @@ except Exception as e:
 }
 
 register_warp() {
-  # Uses 3x-ui's built-in WARP registration endpoint.
-  # Generates a keypair and POSTs to /panel/api/xray/warp/reg.
-  echo "Registering WARP via 3x-ui panel API..." >&2
+  # Purges any existing WARP data and registers fresh.
+  # Uses 3x-ui's built-in WARP endpoints.
+  echo "Purging existing WARP data..." >&2
+  api_curl -X POST "${BASE_URL}/panel/api/xray/warp/del" >/dev/null 2>&1 || true
+
+  echo "Registering fresh WARP via 3x-ui panel API..." >&2
 
   if ! command -v wg >/dev/null 2>&1; then
     apt-get install -y wireguard-tools >&2 || die "Failed to install wireguard-tools (needed for wg genkey)."
@@ -459,7 +470,9 @@ configure_xray_config() {
   warp_data_resp="$(api_curl -X POST "${BASE_URL}/panel/api/xray/warp/data")"
 
   local warp_source  # "panel", "config", or "none"
-  warp_source="$(WARP_DATA="$warp_data_resp" CURRENT_XRAY="$current_xray" python3 -c "
+  export WARP_DATA="$warp_data_resp"
+  export CURRENT_XRAY="$current_xray"
+  warp_source="$(python3 << 'CHECKEOF'
 import json,os,sys
 try:
     d = json.loads(os.environ['WARP_DATA'])
@@ -476,7 +489,6 @@ try:
 except:
     pass
 
-# Check xray config for existing wireguard outbound
 try:
     xray_resp = json.loads(os.environ['CURRENT_XRAY'])
     obj = xray_resp.get('obj', {})
@@ -492,7 +504,8 @@ except:
     pass
 
 print('none')
-")"
+CHECKEOF
+  )"
 
   local warp_config_resp
   case "$warp_source" in
@@ -514,7 +527,8 @@ print('none')
 
   # Step 4: Patch in WARP outbound + routing rules
   local updated_xray
-  updated_xray="$(CURRENT_XRAY="$current_xray" WARP_CONFIG="${warp_config_resp}" WARP_SOURCE="${warp_source}" python3 << 'PYEOF'
+  export CURRENT_XRAY="$current_xray" WARP_CONFIG="${warp_config_resp}" WARP_SOURCE="${warp_source}"
+  updated_xray="$(python3 << 'PYEOF'
 import json,os,sys,base64
 
 resp = json.loads(os.environ['CURRENT_XRAY'])
