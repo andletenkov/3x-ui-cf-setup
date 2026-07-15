@@ -554,6 +554,7 @@ printf 'PANEL_PATH=/generated-base-path\n'
 printf 'XUI_USERNAME=admin_generated\n'
 printf 'XUI_PASSWORD=generated-pass-1234\n'
 printf 'CLIENT_UUID=%s\n' "${CLIENT_UUID:-11111111-2222-3333-4444-555555555555}"
+printf 'CLIENT_SUB_ID=%s\n' "${CLIENT_SUB_ID:-abcdef1234567890}"
 EOF
   chmod +x "$stub_path"
 }
@@ -836,4 +837,84 @@ setup_uninstall_fixtures() {
   [[ "$output" == *"Cancelled."* ]]
   [ -e "$NGINX_SITE" ]
   [ ! -f "${BATS_TEST_TMPDIR}/installer-called" ]
+}
+
+# ---------------------------------------------------------------------------
+# install_3xui_and_inbounds — CLIENT_SUB_ID forwarding
+# ---------------------------------------------------------------------------
+
+@test "install_3xui_and_inbounds captures CLIENT_SUB_ID from installer output" {
+  CONFIG_FILE="${BATS_TEST_TMPDIR}/xui-proxy.conf"
+  PANEL_PORT="51234"
+  WS_PORT="51235"
+  WS_PATH="/api/v1/events"
+  GRPC_PORT="51236"
+  GRPC_SERVICE="api.v1.SyncService"
+  SUB_PORT="2096"
+  SUB_PATH="/sub"
+  CLIENT_UUID=""
+  CLIENT_SUB_ID=""
+  BASE_DOMAIN="example.com"
+  PANEL_SUBDOMAIN="admin"
+  VLESS_SUBDOMAIN="vpn"
+  EMAIL="user@example.com"
+
+  local stub="${BATS_TEST_TMPDIR}/install-3xui.sh"
+  write_installer_stub "$stub"
+  export INSTALL_3XUI_SCRIPT="$stub"
+
+  install_3xui_and_inbounds
+  [ "$CLIENT_SUB_ID" == "abcdef1234567890" ]
+}
+
+@test "install_3xui_and_inbounds forwards SUB_PORT and SUB_PATH to installer" {
+  CONFIG_FILE="${BATS_TEST_TMPDIR}/xui-proxy.conf"
+  PANEL_PORT="51234"
+  WS_PORT="51235"
+  WS_PATH="/api/v1/events"
+  GRPC_PORT="51236"
+  GRPC_SERVICE="api.v1.SyncService"
+  SUB_PORT="54321"
+  SUB_PATH="/assets/abc123"
+  CLIENT_UUID=""
+  CLIENT_SUB_ID=""
+  BASE_DOMAIN="example.com"
+  PANEL_SUBDOMAIN="admin"
+  VLESS_SUBDOMAIN="vpn"
+  EMAIL="user@example.com"
+
+  local stub="${BATS_TEST_TMPDIR}/install-3xui.sh"
+  local received_log="${BATS_TEST_TMPDIR}/received-sub-vars"
+  write_installer_stub "$stub" "echo \"\${SUB_PORT}|\${SUB_PATH}\" > '${received_log}'"
+  export INSTALL_3XUI_SCRIPT="$stub"
+
+  run install_3xui_and_inbounds
+  [ "$status" -eq 0 ]
+  [ "$(cat "$received_log")" == "54321|/assets/abc123" ]
+}
+
+@test "install_3xui_and_inbounds forwards CLIENT_SUB_ID for reuse on reruns" {
+  CONFIG_FILE="${BATS_TEST_TMPDIR}/xui-proxy.conf"
+  PANEL_PORT="51234"
+  WS_PORT="51235"
+  WS_PATH="/api/v1/events"
+  GRPC_PORT="51236"
+  GRPC_SERVICE="api.v1.SyncService"
+  SUB_PORT="2096"
+  SUB_PATH="/sub"
+  CLIENT_UUID="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+  CLIENT_SUB_ID="my_existing_sub_id"
+  BASE_DOMAIN="example.com"
+  PANEL_SUBDOMAIN="admin"
+  VLESS_SUBDOMAIN="vpn"
+  EMAIL="user@example.com"
+
+  local stub="${BATS_TEST_TMPDIR}/install-3xui.sh"
+  local received_log="${BATS_TEST_TMPDIR}/received-sub-id"
+  write_installer_stub "$stub" "echo \"\${CLIENT_SUB_ID}\" > '${received_log}'"
+  export INSTALL_3XUI_SCRIPT="$stub"
+
+  run install_3xui_and_inbounds
+  [ "$status" -eq 0 ]
+  [ "$(cat "$received_log")" == "my_existing_sub_id" ]
 }
