@@ -652,9 +652,16 @@ xray_config.setdefault('routing', {})['rules'] = [
     },
 ]
 
-print(json.dumps(xray_config))
+import json as _json
+_output = {'config': xray_config, 'warp_outbound': warp_outbound}
+print(_json.dumps(_output))
 PYEOF
   )" || die "Failed to prepare xray config."
+
+  local updated_xray_warp_outbound
+  export BUILD_OUTPUT="$updated_xray"
+  updated_xray_warp_outbound="$(python3 -c 'import json,os; d=json.loads(os.environ["BUILD_OUTPUT"]); print(json.dumps(d["warp_outbound"]))')"
+  updated_xray="$(python3 -c 'import json,os; d=json.loads(os.environ["BUILD_OUTPUT"]); print(json.dumps(d["config"]))')"
 
   # Step 5: Save via the correct endpoint (form field, not JSON body)
   local resp
@@ -674,6 +681,34 @@ except Exception as e:
 " "$resp" || die "Failed to save xray config via /panel/api/xray/update."
 
   echo "Xray outbounds and routing configured and applied." >&2
+
+  # Step 6: Verify the WARP outbound actually works
+  echo "Testing WARP outbound connectivity..." >&2
+  sleep 2  # Give xray a moment to restart with new config
+
+  local test_resp
+  test_resp="$(api_curl -X POST "${BASE_URL}/panel/api/xray/testOutbound" \
+    --data-urlencode "outbound=${updated_xray_warp_outbound}" \
+    --data-urlencode "mode=real")"
+
+  local test_ok
+  test_ok="$(python3 -c "
+import json,sys
+try:
+    data = json.loads(sys.argv[1])
+    if data.get('success'):
+        print('ok')
+    else:
+        print('fail:' + data.get('msg','unknown'))
+except Exception as e:
+    print('fail:' + str(e))
+" "$test_resp")"
+
+  if [[ "$test_ok" == "ok" ]]; then
+    echo "WARP outbound test passed." >&2
+  else
+    echo "WARNING: WARP outbound test failed (${test_ok#fail:}). Connection may not work until Cloudflare activates the endpoint." >&2
+  fi
 }
 
 main() {
