@@ -481,23 +481,45 @@ elif isinstance(xray_setting_raw, str) and xray_setting_raw:
 else:
     xray_config = {}
 
-# Parse the WARP config from the panel
+# Parse the WARP config and build the wireguard outbound
 warp_resp = json.loads(os.environ['WARP_CONFIG'])
-warp_obj = warp_resp.get('obj', '')
-if isinstance(warp_obj, str) and warp_obj:
-    warp_outbound = json.loads(warp_obj)
-elif isinstance(warp_obj, dict):
-    warp_outbound = warp_obj
+warp_raw = warp_resp.get('obj', '')
+if isinstance(warp_raw, str) and warp_raw:
+    warp_data = json.loads(warp_raw)
+elif isinstance(warp_raw, dict):
+    warp_data = warp_raw
 else:
-    warp_outbound = None
-
-if not warp_outbound:
-    print('ERROR: WARP config endpoint returned empty/null. Cannot build warp outbound.', file=sys.stderr)
+    print('ERROR: WARP config endpoint returned empty/null.', file=sys.stderr)
     sys.exit(1)
 
-# Ensure the warp outbound has the right tag
-if 'tag' not in warp_outbound:
-    warp_outbound['tag'] = 'warp'
+import base64
+
+private_key = warp_data['key']
+peer_pub = warp_data['config']['peers'][0]['public_key']
+endpoint = warp_data['config']['peers'][0]['endpoint']['host']
+addr_v4 = warp_data['config']['interface']['addresses']['v4']
+addr_v6 = warp_data['config']['interface']['addresses']['v6']
+client_id = warp_data['config'].get('client_id', '')
+
+# Decode client_id (base64) to reserved bytes
+reserved = list(base64.b64decode(client_id + '==')[:3]) if client_id else [0, 0, 0]
+
+warp_outbound = {
+    'tag': 'warp',
+    'protocol': 'wireguard',
+    'settings': {
+        'mtu': 1420,
+        'secretKey': private_key,
+        'address': [addr_v4 + '/32', addr_v6 + '/128'],
+        'reserved': reserved,
+        'domainStrategy': 'ForceIPv4v6',
+        'peers': [{
+            'publicKey': peer_pub,
+            'endpoint': endpoint,
+        }],
+        'noKernelTun': True,
+    },
+}
 
 xray_config['outbounds'] = [
     {
