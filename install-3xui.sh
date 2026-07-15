@@ -448,8 +448,35 @@ configure_xray_config() {
   # via POST /panel/api/xray/update with the xraySetting form field.
   echo "Configuring xray outbounds and routing (WARP + blocking rules)..." >&2
 
-  # Step 1: Register WARP (stores credentials in panel DB)
-  register_warp
+  # Step 1: Check if WARP is already registered; only register if not.
+  local warp_data_resp
+  warp_data_resp="$(api_curl -X POST "${BASE_URL}/panel/api/xray/warp/data")"
+
+  local warp_exists
+  warp_exists="$(python3 -c "
+import json,sys
+try:
+    d = json.loads(sys.argv[1])
+    obj = d.get('obj','')
+    if isinstance(obj, str) and obj:
+        data = json.loads(obj)
+    elif isinstance(obj, dict) and obj:
+        data = obj
+    else:
+        data = None
+    # If there's a 'key' field, WARP is already registered
+    print('yes' if data and data.get('key') else 'no')
+except:
+    print('no')
+" "$warp_data_resp")"
+
+  if [[ "$warp_exists" == "yes" ]]; then
+    echo "WARP already registered, reusing existing credentials." >&2
+  else
+    register_warp
+    # Give Cloudflare a moment to activate the new endpoint
+    sleep 3
+  fi
 
   # Step 2: Fetch the WARP wireguard outbound config the panel built
   local warp_config_resp
