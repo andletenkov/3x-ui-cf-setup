@@ -470,13 +470,13 @@ obj = resp.get('obj', {})
 if isinstance(obj, str):
     obj = json.loads(obj)
 
-xray_setting_str = ''
-if isinstance(obj, dict):
-    xray_setting_str = obj.get('xraySetting', '{}')
+xray_setting_raw = obj.get('xraySetting', '{}') if isinstance(obj, dict) else '{}'
+if isinstance(xray_setting_raw, dict):
+    xray_config = xray_setting_raw
+elif isinstance(xray_setting_raw, str) and xray_setting_raw:
+    xray_config = json.loads(xray_setting_raw)
 else:
-    xray_setting_str = '{}'
-
-xray_config = json.loads(xray_setting_str) if xray_setting_str else {}
+    xray_config = {}
 
 # Get WARP config from the panel (it was just registered)
 # We'll read it from the existing outbounds if present, otherwise build from warp/data
