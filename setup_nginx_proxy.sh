@@ -4,7 +4,7 @@ set -euo pipefail
 BASE_DOMAIN=""
 PANEL_SUBDOMAIN="admin"
 VLESS_SUBDOMAIN="vpn"
-PANEL_PATH="/my-admin"
+PANEL_PATH=""
 EMAIL=""
 PANEL_PORT=""
 SUB_PORT=""
