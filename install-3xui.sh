@@ -448,16 +448,20 @@ configure_xray_config() {
   # via POST /panel/api/xray/update with the xraySetting form field.
   echo "Configuring xray outbounds and routing (WARP + blocking rules)..." >&2
 
-  # Step 1: Register WARP (creates the wireguard outbound data in the panel)
+  # Step 1: Register WARP (stores credentials in panel DB)
   register_warp
 
-  # Step 2: Get the current xray config template
+  # Step 2: Fetch the WARP wireguard outbound config the panel built
+  local warp_config_resp
+  warp_config_resp="$(api_curl -X POST "${BASE_URL}/panel/api/xray/warp/config")"
+
+  # Step 3: Get the current xray config template
   local current_xray
   current_xray="$(api_curl -X POST "${BASE_URL}/panel/api/xray/")"
 
-  # Step 3: Patch in our outbounds and routing rules
+  # Step 4: Patch in WARP outbound + routing rules
   local updated_xray
-  updated_xray="$(CURRENT_XRAY="$current_xray" python3 << 'PYEOF'
+  updated_xray="$(CURRENT_XRAY="$current_xray" WARP_CONFIG="$warp_config_resp" python3 << 'PYEOF'
 import json,os,sys
 
 resp = json.loads(os.environ['CURRENT_XRAY'])
@@ -465,7 +469,6 @@ if not resp.get('success'):
     print('Failed to fetch xray config:', resp.get('msg',''), file=sys.stderr)
     sys.exit(1)
 
-# The response obj contains xraySetting (the JSON config string) among other fields
 obj = resp.get('obj', {})
 if isinstance(obj, str):
     obj = json.loads(obj)
@@ -478,57 +481,40 @@ elif isinstance(xray_setting_raw, str) and xray_setting_raw:
 else:
     xray_config = {}
 
-# Get WARP config from the panel (it was just registered)
-# We'll read it from the existing outbounds if present, otherwise build from warp/data
-# For now, inject the outbounds and routing directly
-
-# Check if warp outbound already exists from the registration
-existing_outbounds = xray_config.get('outbounds', [])
-warp_outbound = None
-for ob in existing_outbounds:
-    if ob.get('tag') == 'warp' or ob.get('protocol') == 'wireguard':
-        warp_outbound = ob
-        break
-
-if warp_outbound:
-    # WARP was added by the panel's reg endpoint; keep it, add direct + blocked
-    new_outbounds = [
-        {
-            'tag': 'direct',
-            'protocol': 'freedom',
-            'settings': {
-                'domainStrategy': 'AsIs',
-                'finalRules': [{'action': 'allow'}],
-            },
-        },
-        warp_outbound,
-        {
-            'tag': 'blocked',
-            'protocol': 'blackhole',
-            'settings': {},
-        },
-    ]
+# Parse the WARP config from the panel
+warp_resp = json.loads(os.environ['WARP_CONFIG'])
+warp_obj = warp_resp.get('obj', '')
+if isinstance(warp_obj, str) and warp_obj:
+    warp_outbound = json.loads(warp_obj)
+elif isinstance(warp_obj, dict):
+    warp_outbound = warp_obj
 else:
-    # No warp found — just set direct + blocked (warp reg may have stored separately)
-    new_outbounds = [
-        {
-            'tag': 'direct',
-            'protocol': 'freedom',
-            'settings': {
-                'domainStrategy': 'AsIs',
-                'finalRules': [{'action': 'allow'}],
-            },
-        },
-        {
-            'tag': 'blocked',
-            'protocol': 'blackhole',
-            'settings': {},
-        },
-    ]
-    print('WARNING: WARP outbound not found in xray config after registration. '
-          'You may need to add it manually via the panel.', file=sys.stderr)
+    warp_outbound = None
 
-xray_config['outbounds'] = new_outbounds
+if not warp_outbound:
+    print('ERROR: WARP config endpoint returned empty/null. Cannot build warp outbound.', file=sys.stderr)
+    sys.exit(1)
+
+# Ensure the warp outbound has the right tag
+if 'tag' not in warp_outbound:
+    warp_outbound['tag'] = 'warp'
+
+xray_config['outbounds'] = [
+    {
+        'tag': 'direct',
+        'protocol': 'freedom',
+        'settings': {
+            'domainStrategy': 'AsIs',
+            'finalRules': [{'action': 'allow'}],
+        },
+    },
+    warp_outbound,
+    {
+        'tag': 'blocked',
+        'protocol': 'blackhole',
+        'settings': {},
+    },
+]
 
 # Set routing rules
 xray_config.setdefault('routing', {})['rules'] = [
@@ -567,7 +553,7 @@ print(json.dumps(xray_config))
 PYEOF
   )" || die "Failed to prepare xray config."
 
-  # Step 4: Save via the correct endpoint (form field, not JSON body)
+  # Step 5: Save via the correct endpoint (form field, not JSON body)
   local resp
   resp="$(api_curl -X POST "${BASE_URL}/panel/api/xray/update" \
     --data-urlencode "xraySetting=${updated_xray}")"
