@@ -19,6 +19,7 @@ CERT_DIR=""
 CF_CREDENTIALS="/etc/letsencrypt/cloudflare.ini"
 
 CLIENT_UUID=""
+CLIENT_SUB_ID=""
 XUI_USERNAME=""
 XUI_PASSWORD=""
 
@@ -91,6 +92,7 @@ WS_PATH="${WS_PATH}"
 GRPC_SERVICE="${GRPC_SERVICE}"
 SUB_PATH="${SUB_PATH}"
 CLIENT_UUID="${CLIENT_UUID}"
+CLIENT_SUB_ID="${CLIENT_SUB_ID}"
 EOF
   chmod 600 "$CONFIG_FILE"
 }
@@ -918,6 +920,7 @@ install_3xui_and_inbounds() {
     SUB_PORT="$SUB_PORT" \
     SUB_PATH="$SUB_PATH" \
     CLIENT_UUID="$CLIENT_UUID" \
+    CLIENT_SUB_ID="$CLIENT_SUB_ID" \
     XUI_VERSION="${XUI_VERSION:-}" \
     "$installer_script"
   )" || die "install-3xui.sh failed."
@@ -929,6 +932,7 @@ install_3xui_and_inbounds() {
       XUI_USERNAME) XUI_USERNAME="$value" ;;
       XUI_PASSWORD) XUI_PASSWORD="$value" ;;
       CLIENT_UUID) CLIENT_UUID="$value" ;;
+      CLIENT_SUB_ID) CLIENT_SUB_ID="$value" ;;
     esac
   done <<< "$installer_out"
 

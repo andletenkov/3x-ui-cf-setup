@@ -102,6 +102,7 @@ fi
 : "${SUB_PATH:?SUB_PATH is required}"
 
 CLIENT_UUID="${CLIENT_UUID:-}"
+CLIENT_SUB_ID="${CLIENT_SUB_ID:-}"
 XUI_VERSION="${XUI_VERSION:-}"
 
 generate_uuid() {
@@ -117,6 +118,7 @@ generate_uuid() {
 }
 
 [[ -n "$CLIENT_UUID" ]] || CLIENT_UUID="$(generate_uuid)"
+[[ -n "$CLIENT_SUB_ID" ]] || CLIENT_SUB_ID="$(openssl rand -hex 8)"
 
 install_xui() {
   echo "3x-ui not found, running unattended installer (3x-ui will generate its own secure username/password/path; port ${PANEL_PORT} is pre-reserved by setup_nginx_proxy.sh)..." >&2
@@ -255,7 +257,11 @@ print(json.dumps({
     'protocol': 'vless',
     'tag': sys.argv[3],
     'settings': {
-        'clients': [{'id': sys.argv[4], 'email': sys.argv[5]}],
+        'clients': [{
+            'id': sys.argv[4],
+            'email': sys.argv[5],
+            'subId': sys.argv[7],
+        }],
         'decryption': 'none',
         'fallbacks': [],
     },
@@ -265,7 +271,7 @@ print(json.dumps({
         'destOverride': ['http', 'tls'],
     },
 }))
-" "$remark" "$port" "$tag" "$CLIENT_UUID" "$client_email" "$stream_settings")"
+" "$remark" "$port" "$tag" "$CLIENT_UUID" "$client_email" "$stream_settings" "$CLIENT_SUB_ID")"
 
   local resp
   resp="$(api_curl -X POST "${BASE_URL}/panel/api/inbounds/add" \
@@ -305,7 +311,7 @@ print(json.dumps({
 " "$WS_PATH")"
 
   echo "Creating inbound '${tag}' (WS, port ${WS_PORT}, path ${WS_PATH})..." >&2
-  xui_add_inbound "$WS_PORT" "$tag" "WS-inbound" "$stream_settings" "client-ws"
+  xui_add_inbound "$WS_PORT" "$tag" "ws-cdn" "$stream_settings" "client"
 }
 
 ensure_grpc_inbound() {
@@ -327,7 +333,7 @@ print(json.dumps({
 " "$GRPC_SERVICE")"
 
   echo "Creating inbound '${tag}' (gRPC, port ${GRPC_PORT}, serviceName ${GRPC_SERVICE})..." >&2
-  xui_add_inbound "$GRPC_PORT" "$tag" "gRPC-inbound" "$stream_settings" "client-grpc"
+  xui_add_inbound "$GRPC_PORT" "$tag" "grpc-cdn" "$stream_settings" "client"
 }
 
 configure_subscription() {
@@ -396,6 +402,7 @@ main() {
   printf 'XUI_USERNAME=%s\n' "$XUI_USERNAME"
   printf 'XUI_PASSWORD=%s\n' "$XUI_PASSWORD"
   printf 'CLIENT_UUID=%s\n' "$CLIENT_UUID"
+  printf 'CLIENT_SUB_ID=%s\n' "$CLIENT_SUB_ID"
 }
 
 main "$@"
