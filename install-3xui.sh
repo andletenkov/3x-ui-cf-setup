@@ -227,33 +227,33 @@ sys.exit(1)
 xui_add_inbound() {
   local port="$1" tag="$2" remark="$3" stream_settings="$4" client_email="$5"
 
-  local settings
-  settings="$(python3 -c "
+  local json_body
+  json_body="$(python3 -c "
 import json,sys
 print(json.dumps({
-    'clients': [{'id': sys.argv[1], 'email': sys.argv[2], 'enable': True}],
-    'decryption': 'none',
+    'up': 0,
+    'down': 0,
+    'total': 0,
+    'remark': sys.argv[1],
+    'enable': True,
+    'expiryTime': 0,
+    'listen': '127.0.0.1',
+    'port': int(sys.argv[2]),
+    'protocol': 'vless',
+    'tag': sys.argv[3],
+    'settings': json.dumps({
+        'clients': [{'id': sys.argv[4], 'email': sys.argv[5], 'enable': True}],
+        'decryption': 'none',
+    }),
+    'streamSettings': sys.argv[6],
+    'sniffing': json.dumps({'enabled': True, 'destOverride': ['http', 'tls'], 'metadataOnly': False, 'routeOnly': True}),
 }))
-" "$CLIENT_UUID" "$client_email")"
-
-  local sniffing
-  sniffing='{"enabled":true,"destOverride":["http","tls"],"metadataOnly":false,"routeOnly":true}'
+" "$remark" "$port" "$tag" "$CLIENT_UUID" "$client_email" "$stream_settings")"
 
   local resp
   resp="$(api_curl -X POST "${BASE_URL}/panel/inbound/add" \
-    --data-urlencode "up=0" \
-    --data-urlencode "down=0" \
-    --data-urlencode "total=0" \
-    --data-urlencode "remark=${remark}" \
-    --data-urlencode "enable=true" \
-    --data-urlencode "expiryTime=0" \
-    --data-urlencode "listen=127.0.0.1" \
-    --data-urlencode "port=${port}" \
-    --data-urlencode "protocol=vless" \
-    --data-urlencode "tag=${tag}" \
-    --data-urlencode "settings=${settings}" \
-    --data-urlencode "streamSettings=${stream_settings}" \
-    --data-urlencode "sniffing=${sniffing}")"
+    -H 'Content-Type: application/json' \
+    -d "$json_body")"
 
   python3 -c "
 import json,sys

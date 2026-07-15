@@ -11,9 +11,9 @@ SUB_PORT=""
 WS_PORT=""
 GRPC_PORT=""
 
-WS_PATH="/api/v1/events"
-GRPC_SERVICE="api.v1.SyncService"
-SUB_PATH="/sub"
+WS_PATH=""
+GRPC_SERVICE=""
+SUB_PATH=""
 
 CERT_DIR=""
 CF_CREDENTIALS="/etc/letsencrypt/cloudflare.ini"
@@ -348,9 +348,12 @@ collect_input() {
   fi
 
   echo
-  prompt WS_PATH "WebSocket path" "$WS_PATH"
-  prompt GRPC_SERVICE "gRPC service name" "$GRPC_SERVICE"
-  prompt SUB_PATH "Subscription path" "$SUB_PATH"
+  # Auto-generate WS_PATH, GRPC_SERVICE, and SUB_PATH if not already set
+  # (loaded from CONFIG_FILE on reruns). These are security-sensitive: they
+  # act as shared secrets (anyone who guesses the path can connect).
+  WS_PATH="${WS_PATH:-/$(openssl rand -hex 8)}"
+  GRPC_SERVICE="${GRPC_SERVICE:-svc_$(openssl rand -hex 8)}"
+  SUB_PATH="${SUB_PATH:-/$(openssl rand -hex 8)}"
 
   if [[ -z "${CLOUDFLARE_API_TOKEN:-}" ]]; then
     echo
