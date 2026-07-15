@@ -317,7 +317,7 @@ collect_input() {
   echo "by this script up front so it cannot collide with WS/gRPC/Subscription/SSH,"
   echo "then handed to the 3x-ui installer explicitly."
 
-  prompt SUB_PORT "Subscription local port" "2096"
+  SUB_PORT="${SUB_PORT:-$(random_free_port "443")}"
   validate_port "Subscription port" "$SUB_PORT"
 
   default_ws_port="${WS_PORT:-$(random_free_port "$SUB_PORT")}"
