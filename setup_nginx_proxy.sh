@@ -959,25 +959,10 @@ print_client_links() {
 verify_deployment() {
   local panel_domain="${PANEL_SUBDOMAIN}.${BASE_DOMAIN}"
   local vless_domain="${VLESS_SUBDOMAIN}.${BASE_DOMAIN}"
-  local answer=""
   local all_ok=true
 
   echo
   echo "=== Post-configuration verification ==="
-  echo
-  echo "Now go configure 3x-ui / Xray to listen on:"
-  echo "  Panel:  127.0.0.1:${PANEL_PORT}${PANEL_PATH}/"
-  echo "  Sub:    127.0.0.1:${SUB_PORT}, path ${SUB_PATH}/"
-  echo "  WS:     127.0.0.1:${WS_PORT}, path ${WS_PATH}"
-  echo "  gRPC:   127.0.0.1:${GRPC_PORT}, serviceName ${GRPC_SERVICE}"
-  echo
-  read -r -p "Press Enter once 3x-ui/Xray are configured and running (or type 's' to skip verification): " answer
-
-  if [[ "$answer" == "s" || "$answer" == "S" ]]; then
-    echo "Skipping verification. Run this script's checks manually later if needed."
-    return
-  fi
-
   echo
   echo "Checking local listeners..."
 
