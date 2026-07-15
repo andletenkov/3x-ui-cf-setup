@@ -378,7 +378,19 @@ except Exception as e:
     sys.exit(1)
 " "$resp" || die "Failed to update subscription settings via API."
 
-  echo "Subscription configured." >&2
+  echo "Subscription configured, restarting x-ui to apply..." >&2
+  systemctl restart x-ui >&2 || true
+
+  # Wait for the subscription port to come up after restart
+  local i
+  for ((i = 0; i < 15; i++)); do
+    if ss -H -ltn "sport = :${SUB_PORT}" 2>/dev/null | grep -q .; then
+      echo "Subscription service is listening on port ${SUB_PORT}." >&2
+      return
+    fi
+    sleep 2
+  done
+  echo "WARNING: Subscription service did not start listening on port ${SUB_PORT} within 30s." >&2
 }
 
 main() {
