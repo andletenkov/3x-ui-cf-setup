@@ -362,8 +362,8 @@ collect_input() {
     GRPC_SERVICE="com.${grpc_orgs[RANDOM % ${#grpc_orgs[@]}]}.${grpc_pkgs[RANDOM % ${#grpc_pkgs[@]}]}.v$(( RANDOM % 3 + 1 )).${grpc_svcs[RANDOM % ${#grpc_svcs[@]}]}"
   fi
   if [[ -z "$SUB_PATH" ]]; then
-    local sub_words=(feed config subscription profile account settings)
-    SUB_PATH="/api/v$(( RANDOM % 3 + 1 ))/${sub_words[RANDOM % ${#sub_words[@]}]}/$(openssl rand -hex 4)"
+    local sub_words=(download resources assets static content files docs)
+    SUB_PATH="/${sub_words[RANDOM % ${#sub_words[@]}]}/$(openssl rand -hex 6)"
   fi
 
   if [[ -z "${CLOUDFLARE_API_TOKEN:-}" ]]; then
