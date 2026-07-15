@@ -336,6 +336,22 @@ print(json.dumps({
   xui_add_inbound "$GRPC_PORT" "$tag" "grpc-cdn" "$stream_settings" "client"
 }
 
+update_geo_files() {
+  local geo_dir="/usr/local/x-ui/bin"
+  local geoip_url="https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat"
+  local geosite_url="https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat"
+
+  echo "Updating geo files (geoip.dat, geosite.dat) from Loyalsoldier/v2ray-rules-dat..." >&2
+
+  curl -fsSL -o "${geo_dir}/geoip.dat" "$geoip_url" ||
+    echo "WARNING: Failed to download geoip.dat; routing rules using geoip: may not work." >&2
+
+  curl -fsSL -o "${geo_dir}/geosite.dat" "$geosite_url" ||
+    echo "WARNING: Failed to download geosite.dat; routing rules using geosite: may not work." >&2
+
+  echo "Geo files updated." >&2
+}
+
 configure_subscription() {
   echo "Configuring subscription (port ${SUB_PORT}, path ${SUB_PATH})..." >&2
 
@@ -398,6 +414,7 @@ main() {
     echo "3x-ui is already installed, skipping installer (reusing its existing credentials/port/path)." >&2
   else
     install_xui
+    update_geo_files
   fi
 
   read_install_result
