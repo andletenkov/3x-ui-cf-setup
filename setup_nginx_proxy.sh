@@ -720,7 +720,7 @@ server {
     }
 
     location ${SUB_PATH}/ {
-        proxy_pass http://127.0.0.1:${SUB_PORT};
+        proxy_pass http://127.0.0.1:${SUB_PORT}/sub/;
 
         proxy_http_version 1.1;
         proxy_set_header Host \$host;
