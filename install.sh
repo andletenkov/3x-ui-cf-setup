@@ -1154,8 +1154,8 @@ main() {
   confirm_configuration
 
   VPS_FLAG="$(detect_country_flag)"
-  INBOUND_REMARK_WS="${VPS_FLAG} WebSocket CDN"
-  INBOUND_REMARK_GRPC="${VPS_FLAG} gRPC CDN"
+  INBOUND_REMARK_WS="${VPS_FLAG} WebSocket-CDN"
+  INBOUND_REMARK_GRPC="${VPS_FLAG} gRPC-CDN"
 
   install_packages
   anonymize_vps
