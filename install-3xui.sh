@@ -315,7 +315,7 @@ WSEOF
   )"
 
   echo "Creating inbound '${tag}' (WS, port ${WS_PORT}, path ${WS_PATH})..." >&2
-  xui_add_inbound "$WS_PORT" "$tag" "ws-cdn" "$stream_settings" "client"
+  xui_add_inbound "$WS_PORT" "$tag" "${INBOUND_REMARK_WS:-ws-cdn}" "$stream_settings" "client"
 }
 
 ensure_grpc_inbound() {
@@ -339,7 +339,7 @@ GRPCEOF
   )"
 
   echo "Creating inbound '${tag}' (gRPC, port ${GRPC_PORT}, serviceName ${GRPC_SERVICE})..." >&2
-  xui_add_inbound "$GRPC_PORT" "$tag" "grpc-cdn" "$stream_settings" "client"
+  xui_add_inbound "$GRPC_PORT" "$tag" "${INBOUND_REMARK_GRPC:-grpc-cdn}" "$stream_settings" "client"
 }
 
 update_geo_files() {

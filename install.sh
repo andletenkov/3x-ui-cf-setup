@@ -20,6 +20,7 @@ CF_CREDENTIALS="/etc/letsencrypt/cloudflare.ini"
 
 CLIENT_UUID=""
 CLIENT_SUB_ID=""
+VPS_FLAG=""
 XUI_USERNAME=""
 XUI_PASSWORD=""
 
@@ -899,6 +900,31 @@ generate_uuid() {
   fi
 }
 
+detect_country_flag() {
+  local country_code
+  country_code="$(curl -fsSL --max-time 5 https://ipapi.co/country/ 2>/dev/null || true)"
+
+  # Fallback APIs if primary fails or returns non-country response
+  if [[ ! "$country_code" =~ ^[A-Z]{2}$ ]]; then
+    country_code="$(curl -fsSL --max-time 5 https://ifconfig.co/country-iso 2>/dev/null || true)"
+  fi
+  if [[ ! "$country_code" =~ ^[A-Z]{2}$ ]]; then
+    country_code="$(curl -fsSL --max-time 5 http://ip-api.com/line/?fields=countryCode 2>/dev/null || true)"
+  fi
+
+  if [[ "$country_code" =~ ^[A-Z]{2}$ ]]; then
+    # Convert 2-letter country code to regional indicator emoji.
+    # A=0x1F1E6, B=0x1F1E7, ... Z=0x1F1FF
+    local c1 c2
+    c1=$(printf '%x' $(( $(printf '%d' "'${country_code:0:1}") - 65 + 0x1F1E6 )))
+    c2=$(printf '%x' $(( $(printf '%d' "'${country_code:1:1}") - 65 + 0x1F1E6 )))
+    # shellcheck disable=SC2059
+    printf "\\U${c1}\\U${c2}"
+  else
+    printf '🌐'
+  fi
+}
+
 install_3xui_and_inbounds() {
   local script_dir installer_out key value installer_script
   script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
@@ -925,6 +951,8 @@ install_3xui_and_inbounds() {
     SUB_PATH="$SUB_PATH" \
     CLIENT_UUID="$CLIENT_UUID" \
     CLIENT_SUB_ID="$CLIENT_SUB_ID" \
+    INBOUND_REMARK_WS="$INBOUND_REMARK_WS" \
+    INBOUND_REMARK_GRPC="$INBOUND_REMARK_GRPC" \
     XUI_VERSION="${XUI_VERSION:-}" \
     "$installer_script"
   )" || die "install-3xui.sh failed."
@@ -974,8 +1002,8 @@ print_client_links() {
   echo "  URL:      https://${PANEL_SUBDOMAIN}.${BASE_DOMAIN}${PANEL_PATH}/"
   echo
   echo "=== Client VLESS URIs (ready to import into your client app) ==="
-  echo "vless://${CLIENT_UUID}@${VLESS_SUBDOMAIN}.${BASE_DOMAIN}:443?type=ws&security=tls&path=$(printf '%s' "$WS_PATH" | sed 's#/#%2F#g')&host=${VLESS_SUBDOMAIN}.${BASE_DOMAIN}#ws-cdn"
-  echo "vless://${CLIENT_UUID}@${VLESS_SUBDOMAIN}.${BASE_DOMAIN}:443?type=grpc&security=tls&serviceName=${GRPC_SERVICE}&mode=gun&host=${VLESS_SUBDOMAIN}.${BASE_DOMAIN}#grpc-cdn"
+  echo "vless://${CLIENT_UUID}@${VLESS_SUBDOMAIN}.${BASE_DOMAIN}:443?type=ws&security=tls&path=$(printf '%s' "$WS_PATH" | sed 's#/#%2F#g')&host=${VLESS_SUBDOMAIN}.${BASE_DOMAIN}#${VPS_FLAG} WebSocket CDN"
+  echo "vless://${CLIENT_UUID}@${VLESS_SUBDOMAIN}.${BASE_DOMAIN}:443?type=grpc&security=tls&serviceName=${GRPC_SERVICE}&mode=gun&host=${VLESS_SUBDOMAIN}.${BASE_DOMAIN}#${VPS_FLAG} gRPC CDN"
 }
 
 verify_deployment() {
@@ -1124,6 +1152,11 @@ main() {
   CERT_DIR="/etc/letsencrypt/live/${BASE_DOMAIN}"
 
   confirm_configuration
+
+  VPS_FLAG="$(detect_country_flag)"
+  INBOUND_REMARK_WS="${VPS_FLAG} WebSocket CDN"
+  INBOUND_REMARK_GRPC="${VPS_FLAG} gRPC CDN"
+
   install_packages
   anonymize_vps
   install_3xui_and_inbounds
