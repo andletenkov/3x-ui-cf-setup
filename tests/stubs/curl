@@ -26,6 +26,9 @@ if [[ "$write_out" == "http_code" ]]; then
 fi
 
 case "$url" in
+  *ipapi.co/country*) printf '%s' "${CURL_COUNTRY_CODE:-}" ;;
+  *ifconfig.co/country-iso*) printf '%s' "${CURL_COUNTRY_CODE:-}" ;;
+  *ip-api.com*) printf '%s' "${CURL_COUNTRY_CODE:-}" ;;
   *ips-v4*) printf '%s\n' "${CURL_CF_IPV4:-1.1.1.0/24}" ;;
   *ips-v6*) printf '%s\n' "${CURL_CF_IPV6:-2400:cb00::/32}" ;;
   *) printf '' ;;

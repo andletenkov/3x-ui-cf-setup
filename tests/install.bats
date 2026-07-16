@@ -1041,3 +1041,77 @@ EOF
   [ -f "$anonymize_marker" ]
   [[ "$(cat "$anonymize_marker")" == *"--uninstall"* ]]
 }
+
+# ---------------------------------------------------------------------------
+# detect_country_flag
+# ---------------------------------------------------------------------------
+
+@test "detect_country_flag returns non-empty output for valid country code FR" {
+  export CURL_COUNTRY_CODE="FR"
+  run detect_country_flag
+  [ "$status" -eq 0 ]
+  [ -n "$output" ]
+  # Flag emojis are 8 bytes (two 4-byte UTF-8 regional indicators)
+  [ "${#output}" -gt 0 ]
+}
+
+@test "detect_country_flag returns different flags for different countries" {
+  export CURL_COUNTRY_CODE="FR"
+  run detect_country_flag
+  local fr_flag="$output"
+
+  export CURL_COUNTRY_CODE="DE"
+  run detect_country_flag
+  local de_flag="$output"
+
+  [ "$fr_flag" != "$de_flag" ]
+}
+
+@test "detect_country_flag returns consistent output for same country" {
+  export CURL_COUNTRY_CODE="US"
+  run detect_country_flag
+  local first="$output"
+
+  run detect_country_flag
+  local second="$output"
+
+  [ "$first" = "$second" ]
+}
+
+@test "detect_country_flag returns fallback when all APIs fail" {
+  export CURL_SHOULD_FAIL=1
+  run detect_country_flag
+  [ "$status" -eq 0 ]
+  [ -n "$output" ]
+}
+
+@test "detect_country_flag returns fallback for invalid response" {
+  export CURL_COUNTRY_CODE="INVALID"
+  run detect_country_flag
+  [ "$status" -eq 0 ]
+  [ -n "$output" ]
+}
+
+@test "detect_country_flag fallback is same for failure and invalid response" {
+  export CURL_SHOULD_FAIL=1
+  run detect_country_flag
+  local fail_output="$output"
+  unset CURL_SHOULD_FAIL
+
+  export CURL_COUNTRY_CODE="INVALID"
+  run detect_country_flag
+  [ "$output" = "$fail_output" ]
+}
+
+@test "INBOUND_REMARK variables contain flag and transport name" {
+  export CURL_COUNTRY_CODE="NL"
+  local flag
+  flag="$(detect_country_flag)"
+  local remark_ws="${flag} WebSocket-CDN"
+  local remark_grpc="${flag} gRPC-CDN"
+
+  [[ "$remark_ws" == *"WebSocket-CDN" ]]
+  [[ "$remark_grpc" == *"gRPC-CDN" ]]
+  [[ "$remark_ws" == "${flag}"* ]]
+  [[ "$remark_grpc" == "${flag}"* ]]
+}
