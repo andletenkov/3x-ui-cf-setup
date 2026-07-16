@@ -1,10 +1,33 @@
 #!/usr/bin/env bash
-# Stub for `sysctl`. `-p <file>` succeeds as long as the file exists (mirrors
-# real sysctl's behavior of failing on a missing/unreadable file).
+# Stub for `sysctl`.
+#   -p <file>              succeeds as long as the file exists (mirrors real
+#                           sysctl's behavior of failing on a missing file)
+#   -n net.ipv4.tcp_congestion_control
+#                           prints $SYSCTL_STUB_CONGESTION_CONTROL (default
+#                           "bbr", so enable_bbr's post-apply check passes
+#                           by default; tests can override to simulate an
+#                           unsupported kernel)
+#   -w key=value            always succeeds, no-op
 set -eu
 
 if [[ "${1:-}" == "-p" ]]; then
   [[ -f "${2:-}" ]] || exit 1
+  exit 0
+fi
+
+if [[ "${1:-}" == "-n" ]]; then
+  case "${2:-}" in
+    net.ipv4.tcp_congestion_control)
+      echo "${SYSCTL_STUB_CONGESTION_CONTROL:-bbr}"
+      ;;
+    *)
+      echo "0"
+      ;;
+  esac
+  exit 0
+fi
+
+if [[ "${1:-}" == "-w" ]]; then
   exit 0
 fi
 

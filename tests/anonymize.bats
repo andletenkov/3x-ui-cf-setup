@@ -25,6 +25,7 @@ setup() {
   SYSCTL_CONF="${BATS_TEST_TMPDIR}/99-anonymize.conf"
   RESOLVED_CONF="${BATS_TEST_TMPDIR}/resolved-99-anonymize.conf"
   SSHD_BANNER_CONF="${BATS_TEST_TMPDIR}/99-no-banner.conf"
+  BBR_SYSCTL_CONF="${BATS_TEST_TMPDIR}/98-bbr.conf"
 
   # Isolate the stateful iptables stub per test.
   export IPTABLES_STATE_FILE="${BATS_TEST_TMPDIR}/iptables-state"
@@ -221,6 +222,55 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
+# enable_bbr / disable_bbr
+# ---------------------------------------------------------------------------
+
+@test "enable_bbr writes fq/bbr sysctl config" {
+  run enable_bbr
+  [ "$status" -eq 0 ]
+  [ -f "$BBR_SYSCTL_CONF" ]
+  grep -q "net.core.default_qdisc = fq" "$BBR_SYSCTL_CONF"
+  grep -q "net.ipv4.tcp_congestion_control = bbr" "$BBR_SYSCTL_CONF"
+}
+
+@test "enable_bbr reports success when active congestion control reads back as bbr" {
+  export SYSCTL_STUB_CONGESTION_CONTROL=bbr
+  run enable_bbr
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"BBR enabled"* ]]
+}
+
+@test "enable_bbr warns if active congestion control did not switch to bbr" {
+  export SYSCTL_STUB_CONGESTION_CONTROL=cubic
+  run enable_bbr
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"WARNING"* ]]
+  [[ "$output" == *"not bbr"* ]]
+}
+
+@test "enable_bbr skips gracefully when the tcp_bbr module cannot be loaded" {
+  export MODPROBE_SHOULD_FAIL=1
+  run enable_bbr
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"could not load the tcp_bbr kernel module"* ]]
+  [ ! -f "$BBR_SYSCTL_CONF" ]
+}
+
+@test "disable_bbr removes the BBR config and reverts congestion control" {
+  enable_bbr
+  [ -f "$BBR_SYSCTL_CONF" ]
+
+  run disable_bbr
+  [ "$status" -eq 0 ]
+  [ ! -f "$BBR_SYSCTL_CONF" ]
+}
+
+@test "disable_bbr is a no-op when BBR was never enabled" {
+  run disable_bbr
+  [ "$status" -eq 0 ]
+}
+
+# ---------------------------------------------------------------------------
 # uninstall_all -- full revert sequence
 # ---------------------------------------------------------------------------
 
@@ -232,10 +282,12 @@ EOF
   harden_ping_block
   harden_ttl
   harden_banners
+  enable_bbr
 
   [ -f "$RESOLVED_CONF" ]
   [ -f "$SYSCTL_CONF" ]
   [ -f "$SSHD_BANNER_CONF" ]
+  [ -f "$BBR_SYSCTL_CONF" ]
   grep -q "anonymize-icmp-block" "$IPTABLES_STATE_FILE"
   grep -q "anonymize-ttl-normalize" "$IPTABLES_STATE_FILE"
 
@@ -245,6 +297,7 @@ EOF
   [ ! -f "$RESOLVED_CONF" ]
   [ ! -f "$SYSCTL_CONF" ]
   [ ! -f "$SSHD_BANNER_CONF" ]
+  [ ! -f "$BBR_SYSCTL_CONF" ]
   ! grep -q "anonymize-icmp-block" "$IPTABLES_STATE_FILE"
   ! grep -q "anonymize-ttl-normalize" "$IPTABLES_STATE_FILE"
 }

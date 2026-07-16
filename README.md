@@ -139,6 +139,13 @@ checks (e.g. 2ip.io's "privacy bar") key off of:
 | Hop-count/TTL inconsistency | Normalizes outbound TTL to `64` via an `iptables` mangle rule, so WARP-routed vs direct-routed traffic doesn't show a different hop count |
 | Service-banner fingerprinting | Suppresses the SSH pre-auth banner (nginx's `server_tokens off` is already handled by `install.sh`) |
 
+Also enables **BBR congestion control** (`net.ipv4.tcp_congestion_control=bbr`
++ `net.core.default_qdisc=fq`) — a pure throughput improvement, not an
+anonymity measure, but bundled here since it's the same sysctl surface.
+BBR handles loss/high-latency international routes (common for
+Xray/WARP-routed traffic) noticeably better than the default `cubic`.
+Skipped gracefully if the kernel doesn't support the `tcp_bbr` module.
+
 **What it explicitly does NOT and cannot fix** (printed as a reminder at
 the end of every run):
 

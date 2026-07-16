@@ -67,8 +67,11 @@ against stubbed `sysctl`/`iptables`/`systemctl`/`timedatectl`/`apt-get`:
 - `harden_ttl` / `unharden_ttl` — POSTROUTING TTL-set mangle rule,
   idempotent re-application
 - `harden_banners` / `unharden_banners` — SSH `Banner none` config
+- `enable_bbr` / `disable_bbr` — fq/bbr sysctl written, active
+  congestion-control readback check, graceful skip when the `tcp_bbr`
+  module can't be loaded, revert to cubic/pfifo_fast on disable
 - `uninstall_all` — full revert of everything a complete run would have
-  applied; requires root
+  applied (including BBR); requires root
 - `main --uninstall` dispatch
 - `print_limitations` — documents the IP/ASN reputation, reverse-DNS and
   WebRTC caveats
@@ -97,4 +100,6 @@ environment variables so tests stay hermetic and fast:
 | `iptables`   | `IPTABLES_STATE_FILE=/path/to/file` — stateful fake: tracks added rules so `-C`/`-A`/`-D` behave consistently across calls |
 | `sysctl`     | `-p <file>` fails if the file doesn't exist, mirroring real behavior |
 | `timedatectl`| `status` prints lines containing `sync`/`ntp` for the log-grep in `harden_ntp` |
+| `sysctl -n net.ipv4.tcp_congestion_control` | `SYSCTL_STUB_CONGESTION_CONTROL` (default `bbr`) — simulates the post-`enable_bbr` readback |
+| `modprobe`   | `MODPROBE_SHOULD_FAIL=1` — simulates a kernel without BBR support |
 | `systemctl`, `certbot`, `apt`, `apt-get`, `netfilter-persistent` | always succeed, no-op |

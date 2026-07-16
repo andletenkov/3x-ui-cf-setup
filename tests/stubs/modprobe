@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Stub for `modprobe`. Succeeds unless MODPROBE_SHOULD_FAIL is set (simulates
+# a kernel without BBR support).
+set -eu
+
+if [[ -n "${MODPROBE_SHOULD_FAIL:-}" ]]; then
+  exit 1
+fi
+
+exit 0
