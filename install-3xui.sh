@@ -392,7 +392,7 @@ configure_subscription() {
   current_settings="$(api_curl -X POST "${BASE_URL}/panel/api/setting/all")"
 
   local updated_settings
-  export CUR_SETTINGS="$current_settings" SUB_PORT_ARG="$SUB_PORT" SUB_PATH_ARG="$SUB_PATH"
+  export CUR_SETTINGS="$current_settings" SUB_PORT_ARG="$SUB_PORT" SUB_PATH_ARG="$SUB_PATH" SUB_DOMAIN_ARG="${SUB_DOMAIN:-}"
   updated_settings="$(python3 << 'SUBEOF'
 import json,os,sys
 
@@ -406,6 +406,8 @@ settings['subEnable'] = True
 settings['subPort'] = int(os.environ['SUB_PORT_ARG'])
 settings['subPath'] = os.environ['SUB_PATH_ARG'].lstrip('/')
 settings['subListen'] = '127.0.0.1'
+if os.environ.get('SUB_DOMAIN_ARG'):
+    settings['subDomain'] = 'https://' + os.environ['SUB_DOMAIN_ARG']
 print(json.dumps(settings))
 SUBEOF
   )" ||
