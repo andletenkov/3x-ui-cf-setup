@@ -25,6 +25,13 @@
 # Optional:
 #   CLIENT_UUID                  - reuse an existing client UUID (persisted
 #                                  across install.sh reruns); generated if empty
+#   SUB_DOMAIN                  - public domain the subscription is served under
+#                                  (sets 3x-ui's subURI); omitted if unset
+#   VLESS_DOMAIN                 - public domain WS/gRPC inbounds are served
+#                                  under (sets streamSettings.externalProxy so
+#                                  panel-generated client links and
+#                                  subscriptions use it instead of the raw
+#                                  listen IP/port); omitted if unset
 #   XUI_VERSION                  - 3x-ui release tag to install (e.g. v3.4.0,
 #                                  or dev-latest). Unset/empty installs the
 #                                  latest stable release (installer default).
@@ -325,14 +332,22 @@ ensure_ws_inbound() {
   fi
 
   local stream_settings
-  export WS_PATH_ARG="$WS_PATH"
+  export WS_PATH_ARG="$WS_PATH" EXT_DOMAIN="${VLESS_DOMAIN:-}"
   stream_settings="$(python3 << 'WSEOF'
 import json,os
-print(json.dumps({
+settings = {
     'network': 'ws',
     'security': 'none',
     'wsSettings': {'acceptProxyProtocol': False, 'path': os.environ['WS_PATH_ARG'], 'host': '', 'headers': {}},
-}))
+}
+if os.environ.get('EXT_DOMAIN'):
+    settings['externalProxy'] = [{
+        'forceTls': 'tls',
+        'dest': os.environ['EXT_DOMAIN'],
+        'port': 443,
+        'remark': '',
+    }]
+print(json.dumps(settings))
 WSEOF
   )"
 
@@ -351,14 +366,22 @@ ensure_grpc_inbound() {
   fi
 
   local stream_settings
-  export GRPC_SVC="$GRPC_SERVICE"
+  export GRPC_SVC="$GRPC_SERVICE" EXT_DOMAIN="${VLESS_DOMAIN:-}"
   stream_settings="$(python3 << 'GRPCEOF'
 import json,os
-print(json.dumps({
+settings = {
     'network': 'grpc',
     'security': 'none',
     'grpcSettings': {'serviceName': os.environ['GRPC_SVC'], 'multiMode': False},
-}))
+}
+if os.environ.get('EXT_DOMAIN'):
+    settings['externalProxy'] = [{
+        'forceTls': 'tls',
+        'dest': os.environ['EXT_DOMAIN'],
+        'port': 443,
+        'remark': '',
+    }]
+print(json.dumps(settings))
 GRPCEOF
   )"
 
