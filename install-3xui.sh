@@ -408,7 +408,7 @@ settings['subPath'] = os.environ['SUB_PATH_ARG'].lstrip('/')
 settings['subListen'] = '127.0.0.1'
 if os.environ.get('SUB_DOMAIN_ARG'):
     sub_path = os.environ['SUB_PATH_ARG'].strip('/')
-    settings['subURI'] = 'https://' + os.environ['SUB_DOMAIN_ARG'] + '/' + sub_path
+    settings['subURI'] = 'https://' + os.environ['SUB_DOMAIN_ARG'] + '/' + sub_path + '/'
     settings['subDomain'] = ''
 print(json.dumps(settings))
 SUBEOF
