@@ -407,7 +407,7 @@ settings['subPort'] = int(os.environ['SUB_PORT_ARG'])
 settings['subPath'] = os.environ['SUB_PATH_ARG'].lstrip('/')
 settings['subListen'] = '127.0.0.1'
 if os.environ.get('SUB_DOMAIN_ARG'):
-    settings['subDomain'] = 'https://' + os.environ['SUB_DOMAIN_ARG']
+    settings['subDomain'] = os.environ['SUB_DOMAIN_ARG']
 print(json.dumps(settings))
 SUBEOF
   )" ||
