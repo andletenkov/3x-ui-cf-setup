@@ -268,6 +268,59 @@ sys.exit(1)
 " "$resp" "$tag"
 }
 
+# Update only an existing inbound's label. Fetch its full detail first instead
+# of reusing /list output, which can be a slim projection on newer 3x-ui
+# releases and would risk dropping transport/client fields during an update.
+xui_sync_inbound_remark() {
+  local tag="$1" remark="$2" list_resp id detail_resp body resp
+  list_resp="$(api_curl -X GET "${BASE_URL}/panel/api/inbounds/list")"
+
+  id="$(python3 -c "
+import json,sys
+try:
+    inbounds = json.loads(sys.argv[1]).get('obj') or []
+except Exception:
+    sys.exit(1)
+for inbound in inbounds:
+    if inbound.get('tag') == sys.argv[2]:
+        if inbound.get('remark') == sys.argv[3]:
+            sys.exit(2)
+        print(inbound['id'])
+        sys.exit(0)
+sys.exit(1)
+" "$list_resp" "$tag" "$remark")" || {
+    local status=$?
+    [[ "$status" == 2 ]] && return 0
+    die "Could not find existing inbound '${tag}' to update its remark."
+  }
+
+  detail_resp="$(api_curl -X GET "${BASE_URL}/panel/api/inbounds/get/${id}")"
+  body="$(python3 -c "
+import json,sys
+try:
+    inbound = json.loads(sys.argv[1]).get('obj')
+    if not isinstance(inbound, dict):
+        raise ValueError('missing inbound detail')
+    inbound['remark'] = sys.argv[2]
+    print(json.dumps(inbound))
+except Exception as e:
+    print(f'Failed to prepare inbound update: {e}', file=sys.stderr)
+    sys.exit(1)
+" "$detail_resp" "$remark")" || die "Could not fetch full configuration for inbound '${tag}'."
+
+  resp="$(api_curl -X POST "${BASE_URL}/panel/api/inbounds/update/${id}" \
+    -H 'Content-Type: application/json' -d "$body")"
+  python3 -c "
+import json,sys
+try:
+    sys.exit(0 if json.loads(sys.argv[1]).get('success') else 1)
+except Exception:
+    sys.exit(1)
+" "$resp" || die "Failed to update remark for inbound '${tag}'. Response: ${resp}"
+
+  echo "Updated inbound '${tag}' remark to '${remark}'." >&2
+}
+
 xui_add_inbound() {
   local port="$1" tag="$2" remark="$3" stream_settings="$4" client_email="$5"
 
@@ -331,7 +384,8 @@ ensure_ws_inbound() {
   local tag="in-${WS_PORT}-ws"
 
   if xui_inbound_exists "$tag"; then
-    echo "Inbound '${tag}' already exists, skipping." >&2
+    xui_sync_inbound_remark "$tag" "${INBOUND_REMARK_WS:-$(detect_country_flag) WebSocket-CDN}"
+    echo "Inbound '${tag}' already exists, skipping creation." >&2
     return
   fi
 
@@ -365,7 +419,8 @@ ensure_xhttp_inbound() {
   local tag="in-${XHTTP_PORT}-xhttp"
 
   if xui_inbound_exists "$tag"; then
-    echo "Inbound '${tag}' already exists, skipping." >&2
+    xui_sync_inbound_remark "$tag" "${INBOUND_REMARK_XHTTP:-$(detect_country_flag) XHTTP-CDN}"
+    echo "Inbound '${tag}' already exists, skipping creation." >&2
     return
   fi
 
@@ -400,7 +455,8 @@ ensure_grpc_inbound() {
   local tag="in-${GRPC_PORT}-grpc"
 
   if xui_inbound_exists "$tag"; then
-    echo "Inbound '${tag}' already exists, skipping." >&2
+    xui_sync_inbound_remark "$tag" "${INBOUND_REMARK_GRPC:-$(detect_country_flag) gRPC-CDN}"
+    echo "Inbound '${tag}' already exists, skipping creation." >&2
     return
   fi
 

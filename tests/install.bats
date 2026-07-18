@@ -703,6 +703,15 @@ cf_real_ip_env() {
   [[ "$output" == *"'enable': True"* ]]
 }
 
+@test "install-3xui fetches full inbound detail before syncing an existing remark" {
+  local installer="${BATS_TEST_DIRNAME}/../setup-3x-ui.sh"
+
+  run grep -A55 '^xui_sync_inbound_remark()' "$installer"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'/panel/api/inbounds/get/${id}'* ]]
+  [[ "$output" == *'/panel/api/inbounds/update/${id}'* ]]
+}
+
 # ---------------------------------------------------------------------------
 # install_3xui_and_inbounds -- stubs the real install-3xui.sh via
 # INSTALL_3XUI_SCRIPT so no network/root access is required.
