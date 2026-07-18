@@ -268,53 +268,6 @@ sys.exit(1)
 " "$resp" "$tag"
 }
 
-# Keep an existing inbound's panel label aligned with the generated links.
-# This is important on reruns: links are regenerated with the current VPS
-# country, while a pre-existing inbound otherwise retains its old label.
-xui_sync_inbound_remark() {
-  local tag="$1" remark="$2" resp update
-  resp="$(api_curl -X GET "${BASE_URL}/panel/api/inbounds/list")"
-
-  local update_status=0
-  update="$(python3 -c "
-import json,sys
-try:
-    inbounds = (json.loads(sys.argv[1]).get('obj') or [])
-except Exception:
-    sys.exit(1)
-for inbound in inbounds:
-    if inbound.get('tag') == sys.argv[2]:
-        if inbound.get('remark') == sys.argv[3]:
-            sys.exit(2)
-        inbound['remark'] = sys.argv[3]
-        print(json.dumps({'id': inbound['id'], 'inbound': inbound}))
-        sys.exit(0)
-sys.exit(1)
-" "$resp" "$tag" "$remark")" || update_status=$?
-
-  case "$update_status" in
-    0) ;;
-    2) return 0 ;;
-    *) die "Could not find existing inbound '${tag}' to update its remark." ;;
-  esac
-
-  local id body
-  id="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<< "$update")"
-  body="$(python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["inbound"]))' <<< "$update")"
-  resp="$(api_curl -X POST "${BASE_URL}/panel/api/inbounds/update/${id}" \
-    -H 'Content-Type: application/json' -d "$body")"
-
-  python3 -c "
-import json,sys
-try:
-    sys.exit(0 if json.loads(sys.argv[1]).get('success') else 1)
-except Exception:
-    sys.exit(1)
-" "$resp" || die "Failed to update remark for inbound '${tag}'. Response: ${resp}"
-
-  echo "Updated inbound '${tag}' remark to '${remark}'." >&2
-}
-
 xui_add_inbound() {
   local port="$1" tag="$2" remark="$3" stream_settings="$4" client_email="$5"
 
@@ -378,8 +331,7 @@ ensure_ws_inbound() {
   local tag="in-${WS_PORT}-ws"
 
   if xui_inbound_exists "$tag"; then
-    xui_sync_inbound_remark "$tag" "${INBOUND_REMARK_WS:-$(detect_country_flag) WebSocket-CDN}"
-    echo "Inbound '${tag}' already exists, skipping creation." >&2
+    echo "Inbound '${tag}' already exists, skipping." >&2
     return
   fi
 
@@ -413,8 +365,7 @@ ensure_xhttp_inbound() {
   local tag="in-${XHTTP_PORT}-xhttp"
 
   if xui_inbound_exists "$tag"; then
-    xui_sync_inbound_remark "$tag" "${INBOUND_REMARK_XHTTP:-$(detect_country_flag) XHTTP-CDN}"
-    echo "Inbound '${tag}' already exists, skipping creation." >&2
+    echo "Inbound '${tag}' already exists, skipping." >&2
     return
   fi
 
@@ -449,8 +400,7 @@ ensure_grpc_inbound() {
   local tag="in-${GRPC_PORT}-grpc"
 
   if xui_inbound_exists "$tag"; then
-    xui_sync_inbound_remark "$tag" "${INBOUND_REMARK_GRPC:-$(detect_country_flag) gRPC-CDN}"
-    echo "Inbound '${tag}' already exists, skipping creation." >&2
+    echo "Inbound '${tag}' already exists, skipping." >&2
     return
   fi
 
