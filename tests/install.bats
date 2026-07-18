@@ -19,7 +19,7 @@ setup() {
 
   # Reset any state that individual tests might rely on being clean.
   unset SS_LISTENING_PORTS CURL_SHOULD_FAIL CURL_CF_IPV4 CURL_CF_IPV6 \
-    CURL_HTTP_CODE NGINX_T_SHOULD_FAIL UFW_LOG
+    CURL_HTTP_CODE NGINX_T_SHOULD_FAIL UFW_LOG VPS_COUNTRY_CODE
 }
 
 # ---------------------------------------------------------------------------
@@ -479,7 +479,14 @@ nginx_config_env() {
   grep -q "allow from 173.245.48.0/20 to any port 443 proto tcp" "$UFW_LOG"
   grep -q "allow from 2400:cb00::/32 to any port 443 proto tcp" "$UFW_LOG"
   grep -q "delete allow 443/tcp" "$UFW_LOG"
+  grep -q "delete deny 443/tcp" "$UFW_LOG"
   grep -q "deny 443/tcp" "$UFW_LOG"
+  local delete_deny_line allow_cf_line final_deny_line
+  delete_deny_line="$(grep -n "delete deny 443/tcp" "$UFW_LOG" | head -1 | cut -d: -f1)"
+  allow_cf_line="$(grep -n "allow from 173.245.48.0/20" "$UFW_LOG" | head -1 | cut -d: -f1)"
+  final_deny_line="$(grep -n '^deny 443/tcp$' "$UFW_LOG" | tail -1 | cut -d: -f1)"
+  [ "$delete_deny_line" -lt "$allow_cf_line" ]
+  [ "$allow_cf_line" -lt "$final_deny_line" ]
   grep -qx "173.245.48.0/20" "$CF_IP_STATE_FILE"
   grep -qx "2400:cb00::/32" "$CF_IP_STATE_FILE"
 }
@@ -1256,6 +1263,23 @@ EOF
 # ---------------------------------------------------------------------------
 # detect_country_flag
 # ---------------------------------------------------------------------------
+
+@test "detect_country_flag uses VPS_COUNTRY_CODE over geolocation" {
+  export VPS_COUNTRY_CODE="EE"
+  export CURL_COUNTRY_CODE="US"
+
+  run detect_country_flag
+  [ "$status" -eq 0 ]
+  [ "$output" == "🇪🇪" ]
+}
+
+@test "detect_country_flag rejects an invalid VPS_COUNTRY_CODE" {
+  export VPS_COUNTRY_CODE="EST"
+
+  run detect_country_flag
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"VPS_COUNTRY_CODE must be"* ]]
+}
 
 @test "detect_country_flag returns non-empty output for valid country code FR" {
   export CURL_COUNTRY_CODE="FR"

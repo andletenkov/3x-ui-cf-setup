@@ -27,6 +27,9 @@ CF_CREDENTIALS="/etc/letsencrypt/cloudflare.ini"
 CLIENT_UUID=""
 CLIENT_SUB_ID=""
 VPS_FLAG=""
+# Optional ISO 3166-1 alpha-2 country code for inbound labels. When unset,
+# the code is detected from the server's public IP.
+VPS_COUNTRY_CODE="${VPS_COUNTRY_CODE:-}"
 XUI_USERNAME=""
 XUI_PASSWORD=""
 
@@ -106,6 +109,7 @@ XHTTP_PATH="${XHTTP_PATH}"
 SUB_PATH="${SUB_PATH}"
 CLIENT_UUID="${CLIENT_UUID}"
 CLIENT_SUB_ID="${CLIENT_SUB_ID}"
+VPS_COUNTRY_CODE="${VPS_COUNTRY_CODE}"
 EOF
   chmod 600 "$CONFIG_FILE"
 }
@@ -953,13 +957,17 @@ configure_ufw() {
   # deleting the wrong one on --uninstall) for something entirely unrelated
   # to this script's job. If SSH isn't already reachable through UFW on this
   # host, allow it yourself, e.g.: ufw allow 22/tcp
-  # Permit HTTPS only from Cloudflare edge ranges. Add the new rules before
-  # removing the legacy broad allow so active proxied traffic is not interrupted.
+  # Remove broad rules before rebuilding the Cloudflare allow-list. UFW uses
+  # first-match ordering, so a stale broad deny placed before these allows
+  # would block Cloudflare as well.
+  ufw delete allow 443/tcp || true
+  ufw delete deny 443/tcp || true
+
+  # Add Cloudflare rules first, then append the catch-all deny after them.
   local cf_range
   for cf_range in "${CF_IP_RANGES[@]}"; do
     ufw allow from "$cf_range" to any port 443 proto tcp
   done
-  ufw delete allow 443/tcp || true
   ufw deny 443/tcp || true
 
   ufw deny 80/tcp || true
@@ -1057,15 +1065,22 @@ generate_uuid() {
 }
 
 detect_country_flag() {
-  local country_code
-  country_code="$(curl -fsSL --max-time 5 https://ipapi.co/country/ 2>/dev/null || true)"
+  local country_code=""
 
-  # Fallback APIs if primary fails or returns non-country response
-  if [[ ! "$country_code" =~ ^[A-Z]{2}$ ]]; then
-    country_code="$(curl -fsSL --max-time 5 https://ifconfig.co/country-iso 2>/dev/null || true)"
-  fi
-  if [[ ! "$country_code" =~ ^[A-Z]{2}$ ]]; then
-    country_code="$(curl -fsSL --max-time 5 http://ip-api.com/line/?fields=countryCode 2>/dev/null || true)"
+  if [[ -n "$VPS_COUNTRY_CODE" ]]; then
+    country_code="${VPS_COUNTRY_CODE^^}"
+    [[ "$country_code" =~ ^[A-Z]{2}$ ]] ||
+      die "VPS_COUNTRY_CODE must be a two-letter ISO country code (for example, EE)."
+  else
+    country_code="$(curl -fsSL --max-time 5 https://ipapi.co/country/ 2>/dev/null || true)"
+
+    # Fallback APIs if primary fails or returns non-country response
+    if [[ ! "$country_code" =~ ^[A-Z]{2}$ ]]; then
+      country_code="$(curl -fsSL --max-time 5 https://ifconfig.co/country-iso 2>/dev/null || true)"
+    fi
+    if [[ ! "$country_code" =~ ^[A-Z]{2}$ ]]; then
+      country_code="$(curl -fsSL --max-time 5 http://ip-api.com/line/?fields=countryCode 2>/dev/null || true)"
+    fi
   fi
 
   if [[ "$country_code" =~ ^[A-Z]{2}$ ]]; then
