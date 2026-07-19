@@ -658,6 +658,7 @@ cf_real_ip_env() {
   INBOUND_REMARK_GRPC="grpc-cdn"
   INBOUND_REMARK_XHTTP="xhttp-cdn"
   VLESS_SUBDOMAIN="vpn"
+  VLESS_ENCRYPTION_CLIENT_KEY="mlkem768-client-stub"
 
   run print_client_links
   [ "$status" -eq 0 ]
@@ -681,13 +682,14 @@ cf_real_ip_env() {
   XUI_PASSWORD="p"
   PANEL_SUBDOMAIN="admin"
   PANEL_PATH="/admin"
+  VLESS_ENCRYPTION_CLIENT_KEY="mlkem768-client-stub"
 
   run print_client_links
   [ "$status" -eq 0 ]
 
-  [[ "$output" == *"vless://11111111-2222-3333-4444-555555555555@vpn.example.com:443?type=ws&security=tls&path=%2Fapi%2Fv1%2Fevents&host=vpn.example.com#ws-cdn"* ]]
-  [[ "$output" == *"vless://11111111-2222-3333-4444-555555555555@vpn.example.com:443?type=grpc&security=tls&serviceName=api.v1.SyncService&mode=gun&host=vpn.example.com#grpc-cdn"* ]]
-  [[ "$output" == *"vless://11111111-2222-3333-4444-555555555555@vpn.example.com:443?type=xhttp&security=tls&path=%2Fapi%2Fv1%2Fingest%2Fabcd1234&mode=packet-up&host=vpn.example.com#xhttp-cdn"* ]]
+  [[ "$output" == *"vless://11111111-2222-3333-4444-555555555555@vpn.example.com:443?type=ws&security=tls&encryption=mlkem768-client-stub&path=%2Fapi%2Fv1%2Fevents&host=vpn.example.com#ws-cdn"* ]]
+  [[ "$output" == *"vless://11111111-2222-3333-4444-555555555555@vpn.example.com:443?type=grpc&security=tls&encryption=mlkem768-client-stub&serviceName=api.v1.SyncService&mode=gun&host=vpn.example.com#grpc-cdn"* ]]
+  [[ "$output" == *"vless://11111111-2222-3333-4444-555555555555@vpn.example.com:443?type=xhttp&security=tls&encryption=mlkem768-client-stub&flow=xtls-rprx-vision&path=%2Fapi%2Fv1%2Fingest%2Fabcd1234&mode=packet-up&host=vpn.example.com#xhttp-cdn"* ]]
 
   unique_uuid_count=$(printf '%s\n' "$output" \
     | grep -oE '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}' \
@@ -718,6 +720,67 @@ cf_real_ip_env() {
 }
 
 # ---------------------------------------------------------------------------
+# VLESS Encryption (ML-KEM-768) -- WS/gRPC/XHTTP only, never Reality.
+# setup-3x-ui.sh always runs main() unconditionally (no BASH_SOURCE guard),
+# so its functions can't be sourced/exercised directly the way setup.sh's
+# can; these assertions are static, matching the existing convention above.
+# ---------------------------------------------------------------------------
+
+@test "ensure_vless_encryption_keys calls getNewmlkem768 and reuses a passed-in keypair" {
+  local installer="${BATS_TEST_DIRNAME}/../setup-3x-ui.sh"
+
+  run grep -A20 '^ensure_vless_encryption_keys()' "$installer"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'/panel/api/server/getNewmlkem768'* ]]
+  [[ "$output" == *"Reusing existing VLESS Encryption keypair"* ]]
+}
+
+@test "xui_add_inbound includes decryption and an optional client flow" {
+  local installer="${BATS_TEST_DIRNAME}/../setup-3x-ui.sh"
+
+  run grep -A45 '^xui_add_inbound()' "$installer"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"'decryption': os.environ['DECRYPTION']"* ]]
+  [[ "$output" == *"client['flow'] = os.environ['CLIENT_FLOW']"* ]]
+}
+
+@test "ensure_ws_inbound and ensure_grpc_inbound pass the VLESS Encryption server key but no flow" {
+  local installer="${BATS_TEST_DIRNAME}/../setup-3x-ui.sh"
+
+  run grep 'xui_add_inbound "\$WS_PORT"' "$installer"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"$VLESS_ENCRYPTION_SERVER_KEY"'* ]]
+  [[ "$output" != *"xtls-rprx-vision"* ]]
+
+  run grep 'xui_add_inbound "\$GRPC_PORT"' "$installer"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"$VLESS_ENCRYPTION_SERVER_KEY"'* ]]
+  [[ "$output" != *"xtls-rprx-vision"* ]]
+}
+
+@test "ensure_xhttp_inbound passes the VLESS Encryption server key and xtls-rprx-vision flow" {
+  local installer="${BATS_TEST_DIRNAME}/../setup-3x-ui.sh"
+
+  run grep 'xui_add_inbound "\$XHTTP_PORT"' "$installer"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"$VLESS_ENCRYPTION_SERVER_KEY"'* ]]
+  [[ "$output" == *"xtls-rprx-vision"* ]]
+}
+
+@test "main generates VLESS Encryption keys before creating any inbound" {
+  local installer="${BATS_TEST_DIRNAME}/../setup-3x-ui.sh"
+
+  run grep -A8 '^main() {' "$installer"
+  [ "$status" -eq 0 ]
+  local key_line inbound_line
+  key_line="$(printf '%s\n' "$output" | grep -n 'ensure_vless_encryption_keys' | head -1 | cut -d: -f1)"
+  inbound_line="$(printf '%s\n' "$output" | grep -n 'ensure_ws_inbound' | head -1 | cut -d: -f1)"
+  [ -n "$key_line" ]
+  [ -n "$inbound_line" ]
+  [ "$key_line" -lt "$inbound_line" ]
+}
+
+# ---------------------------------------------------------------------------
 # install_3xui_and_inbounds -- stubs the real install-3xui.sh via
 # INSTALL_3XUI_SCRIPT so no network/root access is required.
 # ---------------------------------------------------------------------------
@@ -742,6 +805,8 @@ printf 'XUI_USERNAME=admin_generated\n'
 printf 'XUI_PASSWORD=generated-pass-1234\n'
 printf 'CLIENT_UUID=%s\n' "${CLIENT_UUID:-11111111-2222-3333-4444-555555555555}"
 printf 'CLIENT_SUB_ID=%s\n' "${CLIENT_SUB_ID:-abcdef1234567890}"
+printf 'VLESS_ENCRYPTION_SERVER_KEY=%s\n' "${VLESS_ENCRYPTION_SERVER_KEY:-mlkem768-server-stub}"
+printf 'VLESS_ENCRYPTION_CLIENT_KEY=%s\n' "${VLESS_ENCRYPTION_CLIENT_KEY:-mlkem768-client-stub}"
 EOF
   chmod +x "$stub_path"
 }
@@ -955,6 +1020,8 @@ printf 'PANEL_PATH=/generated-base-path\n'
 printf 'XUI_USERNAME=admin_generated\n'
 printf 'XUI_PASSWORD=generated-pass-1234\n'
 printf 'CLIENT_UUID=11111111-2222-3333-4444-555555555555\n'
+printf 'VLESS_ENCRYPTION_SERVER_KEY=mlkem768-server-stub\n'
+printf 'VLESS_ENCRYPTION_CLIENT_KEY=mlkem768-client-stub\n'
 EOF
   chmod +x "$stub"
   export INSTALL_3XUI_SCRIPT="$stub"

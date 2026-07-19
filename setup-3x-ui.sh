@@ -25,6 +25,14 @@
 # Optional:
 #   CLIENT_UUID                  - reuse an existing client UUID (persisted
 #                                  across setup.sh reruns); generated if empty
+#   VLESS_ENCRYPTION_SERVER_KEY,
+#   VLESS_ENCRYPTION_CLIENT_KEY   - reuse an existing VLESS Encryption
+#                                  (ML-KEM-768) keypair, persisted across
+#                                  setup.sh reruns; both generated together
+#                                  if either is empty. Applied to the WS/
+#                                  gRPC/XHTTP inbounds only -- never Reality,
+#                                  which has no CDN/MITM layer to protect
+#                                  against in the first place.
 #   SUB_DOMAIN                  - public domain the subscription is served under
 #                                  (sets 3x-ui's subURI); omitted if unset
 #   VLESS_DOMAIN                 - public domain WS/gRPC inbounds are served
@@ -42,6 +50,8 @@
 #   XUI_USERNAME=<username>
 #   XUI_PASSWORD=<password>
 #   CLIENT_UUID=<uuid>
+#   VLESS_ENCRYPTION_SERVER_KEY=<key>
+#   VLESS_ENCRYPTION_CLIENT_KEY=<key>
 # setup.sh parses these key=value lines; nothing else should be relied upon.
 # Human-readable progress goes to stderr.
 #
@@ -134,6 +144,8 @@ fi
 
 CLIENT_UUID="${CLIENT_UUID:-}"
 CLIENT_SUB_ID="${CLIENT_SUB_ID:-}"
+VLESS_ENCRYPTION_SERVER_KEY="${VLESS_ENCRYPTION_SERVER_KEY:-}"
+VLESS_ENCRYPTION_CLIENT_KEY="${VLESS_ENCRYPTION_CLIENT_KEY:-}"
 XUI_VERSION="${XUI_VERSION:-}"
 
 generate_uuid() {
@@ -321,15 +333,58 @@ except Exception:
   echo "Updated inbound '${tag}' remark to '${remark}'." >&2
 }
 
+# Generates (or reuses, if already passed in via env) a VLESS Encryption
+# (ML-KEM-768) keypair. Applied only to the WS/gRPC/XHTTP inbounds -- Reality
+# has no CDN/reverse-proxy TLS-termination layer in between to protect
+# against, so it deliberately keeps 'decryption': 'none'.
+ensure_vless_encryption_keys() {
+  if [[ -n "$VLESS_ENCRYPTION_SERVER_KEY" && -n "$VLESS_ENCRYPTION_CLIENT_KEY" ]]; then
+    echo "Reusing existing VLESS Encryption keypair." >&2
+    return
+  fi
+
+  echo "Generating VLESS Encryption (ML-KEM-768) keypair..." >&2
+  local resp
+  resp="$(api_curl -X GET "${BASE_URL}/panel/api/server/getNewmlkem768")"
+
+  VLESS_ENCRYPTION_SERVER_KEY="$(python3 -c "
+import json,sys
+try:
+    print(json.loads(sys.argv[1])['obj']['serverKey'])
+except Exception:
+    sys.exit(1)
+" "$resp")" || die "Failed to generate VLESS Encryption keys (is 3x-ui new enough to support getNewmlkem768?). Response: ${resp}"
+
+  VLESS_ENCRYPTION_CLIENT_KEY="$(python3 -c "
+import json,sys
+try:
+    print(json.loads(sys.argv[1])['obj']['clientKey'])
+except Exception:
+    sys.exit(1)
+" "$resp")" || die "Failed to generate VLESS Encryption keys. Response: ${resp}"
+
+  [[ -n "$VLESS_ENCRYPTION_SERVER_KEY" && -n "$VLESS_ENCRYPTION_CLIENT_KEY" ]] ||
+    die "3x-ui returned an empty VLESS Encryption keypair. Response: ${resp}"
+}
+
 xui_add_inbound() {
-  local port="$1" tag="$2" remark="$3" stream_settings="$4" client_email="$5"
+  local port="$1" tag="$2" remark="$3" stream_settings="$4" client_email="$5" decryption="${6:-none}" client_flow="${7:-}"
 
   # Per the 3x-ui API docs, settings/streamSettings/sniffing should be
   # nested JSON objects (preferred), not JSON-encoded strings.
   local json_body
-  export REMARK="$remark" PORT="$port" TAG="$tag" UUID="$CLIENT_UUID" EMAIL="$client_email" STREAM="$stream_settings" SUBID="$CLIENT_SUB_ID"
+  export REMARK="$remark" PORT="$port" TAG="$tag" UUID="$CLIENT_UUID" EMAIL="$client_email" STREAM="$stream_settings" SUBID="$CLIENT_SUB_ID" DECRYPTION="$decryption" CLIENT_FLOW="$client_flow"
   json_body="$(python3 << 'JSONEOF'
 import json,os
+client = {
+    'id': os.environ['UUID'],
+    # 3x-ui treats an omitted per-client enable flag as disabled.
+    'enable': True,
+    'email': os.environ['EMAIL'],
+    'subId': os.environ['SUBID'],
+}
+if os.environ.get('CLIENT_FLOW'):
+    client['flow'] = os.environ['CLIENT_FLOW']
 print(json.dumps({
     'up': 0,
     'down': 0,
@@ -342,14 +397,8 @@ print(json.dumps({
     'protocol': 'vless',
     'tag': os.environ['TAG'],
     'settings': {
-        'clients': [{
-            'id': os.environ['UUID'],
-            # 3x-ui treats an omitted per-client enable flag as disabled.
-            'enable': True,
-            'email': os.environ['EMAIL'],
-            'subId': os.environ['SUBID'],
-        }],
-        'decryption': 'none',
+        'clients': [client],
+        'decryption': os.environ['DECRYPTION'],
         'fallbacks': [],
     },
     'streamSettings': json.loads(os.environ['STREAM']),
@@ -412,7 +461,7 @@ WSEOF
   echo "Creating inbound '${tag}' (WS, port ${WS_PORT}, path ${WS_PATH})..." >&2
   local _flag
   _flag="$(detect_country_flag)"
-  xui_add_inbound "$WS_PORT" "$tag" "${INBOUND_REMARK_WS:-${_flag} WebSocket-CDN}" "$stream_settings" "client"
+  xui_add_inbound "$WS_PORT" "$tag" "${INBOUND_REMARK_WS:-${_flag} WebSocket-CDN}" "$stream_settings" "client" "$VLESS_ENCRYPTION_SERVER_KEY"
 }
 
 ensure_xhttp_inbound() {
@@ -448,7 +497,10 @@ XHTTPEOF
   echo "Creating inbound '${tag}' (XHTTP, port ${XHTTP_PORT}, path ${XHTTP_PATH})..." >&2
   local _flag
   _flag="$(detect_country_flag)"
-  xui_add_inbound "$XHTTP_PORT" "$tag" "${INBOUND_REMARK_XHTTP:-${_flag} XHTTP-CDN}" "$stream_settings" "client"
+  # flow: xtls-rprx-vision is only meaningful once VLESS Encryption is
+  # enabled -- without it, Vision cannot splice TLS records over XHTTP's own
+  # framing (see README/commit history for the full explanation).
+  xui_add_inbound "$XHTTP_PORT" "$tag" "${INBOUND_REMARK_XHTTP:-${_flag} XHTTP-CDN}" "$stream_settings" "client" "$VLESS_ENCRYPTION_SERVER_KEY" "xtls-rprx-vision"
 }
 
 ensure_grpc_inbound() {
@@ -483,7 +535,7 @@ GRPCEOF
   echo "Creating inbound '${tag}' (gRPC, port ${GRPC_PORT}, serviceName ${GRPC_SERVICE})..." >&2
   local _flag
   _flag="$(detect_country_flag)"
-  xui_add_inbound "$GRPC_PORT" "$tag" "${INBOUND_REMARK_GRPC:-${_flag} gRPC-CDN}" "$stream_settings" "client"
+  xui_add_inbound "$GRPC_PORT" "$tag" "${INBOUND_REMARK_GRPC:-${_flag} gRPC-CDN}" "$stream_settings" "client" "$VLESS_ENCRYPTION_SERVER_KEY"
 }
 
 update_geo_files() {
@@ -778,6 +830,7 @@ main() {
   read_install_result
   wait_for_panel
   setup_api_auth
+  ensure_vless_encryption_keys
   ensure_ws_inbound
   ensure_xhttp_inbound
   ensure_grpc_inbound
@@ -792,6 +845,8 @@ main() {
   printf 'XUI_PASSWORD=%s\n' "$XUI_PASSWORD"
   printf 'CLIENT_UUID=%s\n' "$CLIENT_UUID"
   printf 'CLIENT_SUB_ID=%s\n' "$CLIENT_SUB_ID"
+  printf 'VLESS_ENCRYPTION_SERVER_KEY=%s\n' "$VLESS_ENCRYPTION_SERVER_KEY"
+  printf 'VLESS_ENCRYPTION_CLIENT_KEY=%s\n' "$VLESS_ENCRYPTION_CLIENT_KEY"
 }
 
 main "$@"

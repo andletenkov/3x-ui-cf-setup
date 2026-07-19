@@ -26,6 +26,10 @@ CF_CREDENTIALS="/etc/letsencrypt/cloudflare.ini"
 
 CLIENT_UUID=""
 CLIENT_SUB_ID=""
+# VLESS Encryption (ML-KEM-768) keypair, applied only to the WS/gRPC/XHTTP
+# CDN inbounds (Reality has no CDN/MITM layer in between to protect against).
+VLESS_ENCRYPTION_SERVER_KEY=""
+VLESS_ENCRYPTION_CLIENT_KEY=""
 VPS_FLAG=""
 # Optional ISO 3166-1 alpha-2 country code for inbound labels. When unset,
 # the code is detected from the server's public IP.
@@ -109,6 +113,8 @@ XHTTP_PATH="${XHTTP_PATH}"
 SUB_PATH="${SUB_PATH}"
 CLIENT_UUID="${CLIENT_UUID}"
 CLIENT_SUB_ID="${CLIENT_SUB_ID}"
+VLESS_ENCRYPTION_SERVER_KEY="${VLESS_ENCRYPTION_SERVER_KEY}"
+VLESS_ENCRYPTION_CLIENT_KEY="${VLESS_ENCRYPTION_CLIENT_KEY}"
 VPS_COUNTRY_CODE="${VPS_COUNTRY_CODE}"
 EOF
   chmod 600 "$CONFIG_FILE"
@@ -1174,6 +1180,8 @@ install_3xui_and_inbounds() {
     VLESS_DOMAIN="${VLESS_SUBDOMAIN}.${BASE_DOMAIN}" \
     CLIENT_UUID="$CLIENT_UUID" \
     CLIENT_SUB_ID="$CLIENT_SUB_ID" \
+    VLESS_ENCRYPTION_SERVER_KEY="${VLESS_ENCRYPTION_SERVER_KEY:-}" \
+    VLESS_ENCRYPTION_CLIENT_KEY="${VLESS_ENCRYPTION_CLIENT_KEY:-}" \
     INBOUND_REMARK_WS="${INBOUND_REMARK_WS:-}" \
     INBOUND_REMARK_GRPC="${INBOUND_REMARK_GRPC:-}" \
     INBOUND_REMARK_XHTTP="${INBOUND_REMARK_XHTTP:-}" \
@@ -1189,11 +1197,14 @@ install_3xui_and_inbounds() {
       XUI_PASSWORD) XUI_PASSWORD="$value" ;;
       CLIENT_UUID) CLIENT_UUID="$value" ;;
       CLIENT_SUB_ID) CLIENT_SUB_ID="$value" ;;
+      VLESS_ENCRYPTION_SERVER_KEY) VLESS_ENCRYPTION_SERVER_KEY="$value" ;;
+      VLESS_ENCRYPTION_CLIENT_KEY) VLESS_ENCRYPTION_CLIENT_KEY="$value" ;;
     esac
   done <<< "$installer_out"
 
-  [[ -n "$PANEL_PORT" && -n "$PANEL_PATH" && -n "$XUI_USERNAME" && -n "$XUI_PASSWORD" && -n "$CLIENT_UUID" ]] ||
-    die "setup-3x-ui.sh did not report PANEL_PORT/PANEL_PATH/XUI_USERNAME/XUI_PASSWORD/CLIENT_UUID."
+  [[ -n "$PANEL_PORT" && -n "$PANEL_PATH" && -n "$XUI_USERNAME" && -n "$XUI_PASSWORD" && -n "$CLIENT_UUID" \
+     && -n "$VLESS_ENCRYPTION_SERVER_KEY" && -n "$VLESS_ENCRYPTION_CLIENT_KEY" ]] ||
+    die "setup-3x-ui.sh did not report PANEL_PORT/PANEL_PATH/XUI_USERNAME/XUI_PASSWORD/CLIENT_UUID/VLESS_ENCRYPTION_SERVER_KEY/VLESS_ENCRYPTION_CLIENT_KEY."
 
   validate_panel_port
 
@@ -1226,9 +1237,9 @@ print_client_links() {
   echo "  URL:      https://${PANEL_SUBDOMAIN}.${BASE_DOMAIN}${PANEL_PATH}/"
   echo
   echo "=== Client VLESS URIs (ready to import into your client app) ==="
-  echo "vless://${CLIENT_UUID}@${VLESS_SUBDOMAIN}.${BASE_DOMAIN}:443?type=ws&security=tls&path=$(printf '%s' "$WS_PATH" | sed 's#/#%2F#g')&host=${VLESS_SUBDOMAIN}.${BASE_DOMAIN}#${INBOUND_REMARK_WS}"
-  echo "vless://${CLIENT_UUID}@${VLESS_SUBDOMAIN}.${BASE_DOMAIN}:443?type=grpc&security=tls&serviceName=${GRPC_SERVICE}&mode=gun&host=${VLESS_SUBDOMAIN}.${BASE_DOMAIN}#${INBOUND_REMARK_GRPC}"
-  echo "vless://${CLIENT_UUID}@${VLESS_SUBDOMAIN}.${BASE_DOMAIN}:443?type=xhttp&security=tls&path=$(printf '%s' "$XHTTP_PATH" | sed 's#/#%2F#g')&mode=packet-up&host=${VLESS_SUBDOMAIN}.${BASE_DOMAIN}#${INBOUND_REMARK_XHTTP}"
+  echo "vless://${CLIENT_UUID}@${VLESS_SUBDOMAIN}.${BASE_DOMAIN}:443?type=ws&security=tls&encryption=${VLESS_ENCRYPTION_CLIENT_KEY}&path=$(printf '%s' "$WS_PATH" | sed 's#/#%2F#g')&host=${VLESS_SUBDOMAIN}.${BASE_DOMAIN}#${INBOUND_REMARK_WS}"
+  echo "vless://${CLIENT_UUID}@${VLESS_SUBDOMAIN}.${BASE_DOMAIN}:443?type=grpc&security=tls&encryption=${VLESS_ENCRYPTION_CLIENT_KEY}&serviceName=${GRPC_SERVICE}&mode=gun&host=${VLESS_SUBDOMAIN}.${BASE_DOMAIN}#${INBOUND_REMARK_GRPC}"
+  echo "vless://${CLIENT_UUID}@${VLESS_SUBDOMAIN}.${BASE_DOMAIN}:443?type=xhttp&security=tls&encryption=${VLESS_ENCRYPTION_CLIENT_KEY}&flow=xtls-rprx-vision&path=$(printf '%s' "$XHTTP_PATH" | sed 's#/#%2F#g')&mode=packet-up&host=${VLESS_SUBDOMAIN}.${BASE_DOMAIN}#${INBOUND_REMARK_XHTTP}"
 }
 
 verify_deployment() {
