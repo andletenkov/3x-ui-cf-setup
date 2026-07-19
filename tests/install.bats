@@ -156,6 +156,39 @@ valid_inputs() {
   [[ "$output" == *"${XHTTP_PORT}/tcp"* ]]
 }
 
+@test "confirm_configuration omits the Reality section when disabled" {
+  valid_inputs
+  REALITY_SUBDOMAIN=""
+
+  run confirm_configuration <<< "y"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"VLESS Reality"* ]]
+}
+
+@test "confirm_configuration shows the Reality section and its impersonated donor when enabled" {
+  valid_inputs
+  REALITY_SUBDOMAIN="reality"
+  REALITY_DEST="github.com"
+  REALITY_PORT="20000"
+
+  run confirm_configuration <<< "y"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"VLESS Reality (direct connection, no CDN):"* ]]
+  [[ "$output" == *"domain: reality.example.com"* ]]
+  [[ "$output" == *"internal Xray port: 20000"* ]]
+  [[ "$output" == *"impersonating: github.com"* ]]
+  [[ "$output" == *"20000/tcp"* ]]
+}
+
+@test "confirm_configuration describes UFW as open to everyone on 443, not Cloudflare-only" {
+  valid_inputs
+
+  run confirm_configuration <<< "y"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"allowed: 443/tcp from anywhere"* ]]
+  [[ "$output" != *"Cloudflare IP ranges only"* ]]
+}
+
 @test "validate_inputs rejects invalid base domain" {
   valid_inputs
   BASE_DOMAIN="not_a_domain"
@@ -218,6 +251,118 @@ valid_inputs() {
   run validate_inputs
   [ "$status" -eq 1 ]
   [[ "$output" == *"XHTTP port must be different"* ]]
+}
+
+# ---------------------------------------------------------------------------
+# validate_inputs -- optional Reality fields
+# ---------------------------------------------------------------------------
+
+@test "validate_inputs accepts a blank Reality configuration (feature disabled)" {
+  valid_inputs
+  REALITY_SUBDOMAIN=""
+  REALITY_DEST=""
+  REALITY_PORT=""
+  run validate_inputs
+  [ "$status" -eq 0 ]
+}
+
+@test "validate_inputs accepts a fully populated Reality configuration" {
+  valid_inputs
+  REALITY_SUBDOMAIN="reality"
+  REALITY_DEST="github.com"
+  REALITY_PORT="20000"
+  run validate_inputs
+  [ "$status" -eq 0 ]
+}
+
+@test "validate_inputs rejects REALITY_DEST set without REALITY_SUBDOMAIN" {
+  valid_inputs
+  REALITY_SUBDOMAIN=""
+  REALITY_DEST="github.com"
+  run validate_inputs
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"REALITY_DEST is set but REALITY_SUBDOMAIN is blank"* ]]
+}
+
+@test "validate_inputs rejects a Reality subdomain without a donor site" {
+  valid_inputs
+  REALITY_SUBDOMAIN="reality"
+  REALITY_DEST=""
+  REALITY_PORT="20000"
+  run validate_inputs
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"REALITY_DEST"* ]]
+  [[ "$output" == *"is required"* ]]
+}
+
+@test "validate_inputs rejects a Reality subdomain equal to the panel subdomain" {
+  valid_inputs
+  REALITY_SUBDOMAIN="$PANEL_SUBDOMAIN"
+  REALITY_DEST="github.com"
+  REALITY_PORT="20000"
+  run validate_inputs
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"different from the panel subdomain"* ]]
+}
+
+@test "validate_inputs rejects a Reality subdomain equal to the VLESS subdomain" {
+  valid_inputs
+  REALITY_SUBDOMAIN="$VLESS_SUBDOMAIN"
+  REALITY_DEST="github.com"
+  REALITY_PORT="20000"
+  run validate_inputs
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"different from the VLESS subdomain"* ]]
+}
+
+@test "validate_inputs rejects a malformed Reality donor site" {
+  valid_inputs
+  REALITY_SUBDOMAIN="reality"
+  REALITY_DEST="not a hostname"
+  REALITY_PORT="20000"
+  run validate_inputs
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"Invalid Reality donor site"* ]]
+}
+
+@test "validate_inputs rejects a Reality donor site that is the base domain itself" {
+  valid_inputs
+  REALITY_SUBDOMAIN="reality"
+  REALITY_DEST="$BASE_DOMAIN"
+  REALITY_PORT="20000"
+  run validate_inputs
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"must be a real, unrelated third-party site"* ]]
+}
+
+@test "validate_inputs rejects a Reality donor site that is a subdomain of the base domain" {
+  valid_inputs
+  REALITY_SUBDOMAIN="reality"
+  REALITY_DEST="sneaky.${BASE_DOMAIN}"
+  REALITY_PORT="20000"
+  run validate_inputs
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"must be a real, unrelated third-party site"* ]]
+}
+
+@test "validate_inputs rejects a Reality port colliding with another internal port" {
+  valid_inputs
+  REALITY_SUBDOMAIN="reality"
+  REALITY_DEST="github.com"
+  REALITY_PORT="$WS_PORT"
+  run validate_inputs
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"Reality port must be different from every other internal port"* ]]
+}
+
+@test "validate_inputs rejects a Reality port of 443" {
+  valid_inputs
+  REALITY_SUBDOMAIN="reality"
+  REALITY_DEST="github.com"
+  REALITY_PORT="443"
+  run validate_inputs
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"Reality port cannot be 443"* ]]
 }
 
 # ---------------------------------------------------------------------------
@@ -368,6 +513,47 @@ valid_inputs() {
   [[ "$(<"$CONFIG_FILE")" == *'BASE_DOMAIN="example.com"'* ]]
 }
 
+@test "save_config persists Reality fields and load_config restores them" {
+  CONFIG_FILE="${BATS_TEST_TMPDIR}/.3xui-proxy.conf"
+  TIMESTAMP="20260101-000000"
+  BASE_DOMAIN="example.com"
+  PANEL_SUBDOMAIN="admin"
+  VLESS_SUBDOMAIN="vpn"
+  PANEL_PATH="/my-admin"
+  EMAIL="admin@example.com"
+  PANEL_PORT="2053"
+  SUB_PORT="2096"
+  WS_PORT="10001"
+  GRPC_PORT="10002"
+  XHTTP_PORT="10003"
+  WS_PATH="/api/v1/events"
+  GRPC_SERVICE="api.v1.SyncService"
+  XHTTP_PATH="/api/v1/ingest/abcd1234"
+  SUB_PATH="/sub"
+  CLIENT_UUID="00000000-0000-4000-8000-000000000001"
+  CLIENT_SUB_ID="client-sub-id"
+  VLESS_ENCRYPTION_SERVER_KEY="server-key"
+  VLESS_ENCRYPTION_CLIENT_KEY="client-key"
+  REALITY_SUBDOMAIN="reality"
+  REALITY_DEST="github.com"
+  REALITY_PORT="20000"
+  REALITY_SHORT_ID="abcd1234abcd5678"
+
+  save_config
+
+  REALITY_SUBDOMAIN=""
+  REALITY_DEST=""
+  REALITY_PORT=""
+  REALITY_SHORT_ID=""
+
+  load_config
+
+  [ "$REALITY_SUBDOMAIN" == "reality" ]
+  [ "$REALITY_DEST" == "github.com" ]
+  [ "$REALITY_PORT" == "20000" ]
+  [ "$REALITY_SHORT_ID" == "abcd1234abcd5678" ]
+}
+
 # ---------------------------------------------------------------------------
 # write_nginx_config
 # ---------------------------------------------------------------------------
@@ -479,6 +665,34 @@ nginx_config_env() {
   grep -q "delete deny 443/tcp" "$UFW_LOG"
   grep -qx "ufw allow 443/tcp" "$UFW_LOG"
   ! grep -q "allow from .* to any port 443 proto tcp" "$UFW_LOG"
+}
+
+@test "configure_ufw denies REALITY_PORT when Reality is enabled" {
+  nginx_config_env
+  STATE_FILE="${BATS_TEST_TMPDIR}/ports.state"
+  CF_IP_STATE_FILE="${BATS_TEST_TMPDIR}/cloudflare-ips.state"
+  REALITY_PORT="20000"
+  export UFW_LOG="${BATS_TEST_TMPDIR}/ufw.log"
+  : > "$UFW_LOG"
+
+  configure_ufw
+
+  grep -q "deny 20000/tcp" "$UFW_LOG"
+  grep -q "STATE_REALITY_PORT=20000" "$STATE_FILE"
+}
+
+@test "configure_ufw does not deny a Reality port when the feature is disabled" {
+  nginx_config_env
+  STATE_FILE="${BATS_TEST_TMPDIR}/ports.state"
+  CF_IP_STATE_FILE="${BATS_TEST_TMPDIR}/cloudflare-ips.state"
+  REALITY_PORT=""
+  export UFW_LOG="${BATS_TEST_TMPDIR}/ufw.log"
+  : > "$UFW_LOG"
+
+  configure_ufw
+
+  ! grep -q "deny /tcp" "$UFW_LOG"
+  grep -q "STATE_REALITY_PORT=$" "$STATE_FILE"
 }
 
 @test "configure_ufw cleans up and removes stale per-range Cloudflare allow rules from older installs" {
@@ -633,6 +847,31 @@ cf_real_ip_env() {
   [[ "$output" == *"filled-in"* ]]
 }
 
+@test "prompt_optional leaves the variable blank when input is empty and there is no default" {
+  run bash -c '
+    source "'"$SCRIPT"'" >/dev/null 2>&1 || true
+    printf "\n" | { prompt_optional RESULT "Question"; echo "[\$RESULT]"; }
+  '
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"[]"* ]]
+}
+
+@test "prompt_optional accepts a provided value over a blank default" {
+  run bash -c '
+    source "'"$SCRIPT"'" >/dev/null 2>&1 || true
+    printf "reality\n" | { prompt_optional RESULT "Question"; echo "[\$RESULT]"; }
+  '
+  [[ "$output" == *"[reality]"* ]]
+}
+
+@test "prompt_optional reuses a persisted default when input is empty" {
+  run bash -c '
+    source "'"$SCRIPT"'" >/dev/null 2>&1 || true
+    printf "\n" | { prompt_optional RESULT "Question" "reality"; echo "[\$RESULT]"; }
+  '
+  [[ "$output" == *"[reality]"* ]]
+}
+
 # ---------------------------------------------------------------------------
 # generate_uuid / print_client_links
 # ---------------------------------------------------------------------------
@@ -696,6 +935,63 @@ cf_real_ip_env() {
     | sort -u | wc -l | tr -d ' ')
 
   [ "$unique_uuid_count" = "1" ]
+}
+
+# ---------------------------------------------------------------------------
+# print_summary
+# ---------------------------------------------------------------------------
+
+print_summary_env() {
+  PANEL_SUBDOMAIN="admin"
+  VLESS_SUBDOMAIN="vpn"
+  BASE_DOMAIN="example.com"
+  PANEL_PATH="/admin"
+  PANEL_PORT="2053"
+  WS_PORT="10001"
+  WS_PATH="/api/v1/events"
+  XHTTP_PORT="10003"
+  XHTTP_PATH="/api/v1/ingest/abcd1234"
+  GRPC_PORT="10002"
+  GRPC_SERVICE="api.v1.SyncService"
+  SUB_PATH="/sub"
+  SUB_PORT="2096"
+  NGINX_SITE="/etc/nginx/sites-available/3xui-proxy"
+  CF_REAL_IP_CONF="/etc/nginx/conf.d/cloudflare-real-ip.conf"
+  CF_CREDENTIALS="/etc/letsencrypt/cloudflare.ini"
+  CERTBOT_DEPLOY_HOOK="/etc/letsencrypt/renewal-hooks/deploy/nginx-reload.sh"
+}
+
+@test "print_summary omits the Reality section when disabled" {
+  print_summary_env
+  REALITY_SUBDOMAIN=""
+
+  run print_summary
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"VLESS Reality"* ]]
+}
+
+@test "print_summary shows the Reality section when enabled" {
+  print_summary_env
+  REALITY_SUBDOMAIN="reality"
+  REALITY_DEST="github.com"
+  REALITY_PORT="20000"
+
+  run print_summary
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"VLESS Reality (direct connection, no CDN):"* ]]
+  [[ "$output" == *"domain: reality.example.com"* ]]
+  [[ "$output" == *"impersonating: github.com"* ]]
+  [[ "$output" == *"20000/tcp"* ]]
+}
+
+@test "print_summary describes UFW as open to everyone on 443" {
+  print_summary_env
+  REALITY_SUBDOMAIN=""
+
+  run print_summary
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"allowed: 443/tcp from anywhere"* ]]
+  [[ "$output" != *"Cloudflare IP ranges only"* ]]
 }
 
 # ---------------------------------------------------------------------------

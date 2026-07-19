@@ -30,6 +30,16 @@ CLIENT_SUB_ID=""
 # CDN inbounds (Reality has no CDN/MITM layer in between to protect against).
 VLESS_ENCRYPTION_SERVER_KEY=""
 VLESS_ENCRYPTION_CLIENT_KEY=""
+
+# Optional VLESS+Reality direct-connection inbound (no CDN). Blank
+# REALITY_SUBDOMAIN disables the feature entirely. REALITY_DEST is the real,
+# unrelated donor site Reality impersonates for anyone without valid
+# credentials -- never a domain of BASE_DOMAIN itself.
+REALITY_SUBDOMAIN=""
+REALITY_DEST=""
+REALITY_PORT=""
+REALITY_SHORT_ID=""
+
 VPS_FLAG=""
 # Optional ISO 3166-1 alpha-2 country code for inbound labels. When unset,
 # the code is detected from the server's public IP.
@@ -115,6 +125,10 @@ CLIENT_UUID="${CLIENT_UUID}"
 CLIENT_SUB_ID="${CLIENT_SUB_ID}"
 VLESS_ENCRYPTION_SERVER_KEY="${VLESS_ENCRYPTION_SERVER_KEY}"
 VLESS_ENCRYPTION_CLIENT_KEY="${VLESS_ENCRYPTION_CLIENT_KEY}"
+REALITY_SUBDOMAIN="${REALITY_SUBDOMAIN}"
+REALITY_DEST="${REALITY_DEST}"
+REALITY_PORT="${REALITY_PORT}"
+REALITY_SHORT_ID="${REALITY_SHORT_ID}"
 VPS_COUNTRY_CODE="${VPS_COUNTRY_CODE}"
 EOF
   chmod 600 "$CONFIG_FILE"
@@ -139,6 +153,25 @@ prompt() {
 
       echo "Value is required."
     done
+  fi
+
+  printf -v "$variable_name" '%s' "$value"
+}
+
+# Like prompt(), but an empty answer is valid and simply leaves the variable
+# blank -- used for genuinely optional features (Reality, NaiveProxy) where
+# a blank value means "skip this feature", not "ask again".
+prompt_optional() {
+  local variable_name="$1"
+  local prompt_text="$2"
+  local default_value="${3:-}"
+  local value=""
+
+  if [[ -n "$default_value" ]]; then
+    read -r -p "${prompt_text} [${default_value}]: " value
+    value="${value:-$default_value}"
+  else
+    read -r -p "${prompt_text} [leave blank to skip]: " value
   fi
 
   printf -v "$variable_name" '%s' "$value"
@@ -317,6 +350,41 @@ validate_inputs() {
       die "${internal_port_name} cannot be 443 (reserved for the public HTTPS listener)."
   done
 
+  # Reality is entirely optional -- a blank REALITY_SUBDOMAIN disables it,
+  # skipping all of the checks below.
+  if [[ -n "$REALITY_SUBDOMAIN" ]]; then
+    [[ "$REALITY_SUBDOMAIN" =~ ^[A-Za-z0-9-]+$ ]] ||
+      die "Invalid Reality subdomain."
+
+    [[ "$REALITY_SUBDOMAIN" != "$PANEL_SUBDOMAIN" ]] ||
+      die "Reality subdomain must be different from the panel subdomain."
+
+    [[ "$REALITY_SUBDOMAIN" != "$VLESS_SUBDOMAIN" ]] ||
+      die "Reality subdomain must be different from the VLESS subdomain."
+
+    [[ -n "$REALITY_DEST" ]] ||
+      die "REALITY_DEST (donor site to impersonate, e.g. github.com) is required when a Reality subdomain is set."
+
+    [[ "$REALITY_DEST" =~ ^([A-Za-z0-9-]+\.)+[A-Za-z]{2,}$ ]] ||
+      die "Invalid Reality donor site '${REALITY_DEST}' (expected a plain hostname, e.g. github.com)."
+
+    [[ "$REALITY_DEST" != "$BASE_DOMAIN" && "$REALITY_DEST" != *".${BASE_DOMAIN}" ]] ||
+      die "Reality donor site must not be ${BASE_DOMAIN} or a subdomain of it -- it must be a real, unrelated third-party site."
+
+    validate_port "Reality port" "$REALITY_PORT"
+
+    local reality_other_port
+    for reality_other_port in "$SUB_PORT" "$WS_PORT" "$GRPC_PORT" "$XHTTP_PORT" "$PANEL_PORT"; do
+      [[ "$REALITY_PORT" != "$reality_other_port" ]] ||
+        die "Reality port must be different from every other internal port."
+    done
+
+    [[ "$REALITY_PORT" != "443" ]] ||
+      die "Reality port cannot be 443 (reserved for the public HTTPS listener)."
+  elif [[ -n "$REALITY_DEST" ]]; then
+    die "REALITY_DEST is set but REALITY_SUBDOMAIN is blank -- set both to enable Reality, or clear both to disable it."
+  fi
+
   normalize_ws_path
   normalize_xhttp_path
   normalize_sub_path
@@ -434,6 +502,30 @@ collect_input() {
     prompt_secret CLOUDFLARE_API_TOKEN "Cloudflare API Token"
   fi
 
+  echo
+  echo "Optional: VLESS+Reality is a direct connection (no CDN/Cloudflare proxy --"
+  echo "use a DNS-only/grey-cloud record for it), sharing port 443 with the CDN"
+  echo "inbounds above via SNI-based routing. Leave the subdomain blank to skip it."
+  echo
+  prompt_optional REALITY_SUBDOMAIN "Reality subdomain (DNS-only, e.g. reality)" "$REALITY_SUBDOMAIN"
+
+  if [[ -n "$REALITY_SUBDOMAIN" ]]; then
+    prompt REALITY_DEST "Real site for Reality to impersonate (e.g. github.com)" "$REALITY_DEST"
+
+    REALITY_PORT="${REALITY_PORT:-$(random_free_port "443" "$SUB_PORT" "$WS_PORT" "$GRPC_PORT" "$XHTTP_PORT" "$PANEL_PORT")}"
+    validate_port "Reality port" "$REALITY_PORT"
+
+    if port_is_listening "$REALITY_PORT"; then
+      echo "WARNING: port ${REALITY_PORT} is already in use by another process on this host." >&2
+    fi
+
+    [[ -n "$REALITY_SHORT_ID" ]] || REALITY_SHORT_ID="$(openssl rand -hex 8)"
+  else
+    REALITY_DEST=""
+    REALITY_PORT=""
+    REALITY_SHORT_ID=""
+  fi
+
   validate_inputs
 }
 
@@ -476,9 +568,18 @@ confirm_configuration() {
   echo "  URL: https://${panel_domain}${SUB_PATH}/"
   echo "  internal port: ${SUB_PORT}"
   echo
+  if [[ -n "$REALITY_SUBDOMAIN" ]]; then
+    echo "VLESS Reality (direct connection, no CDN):"
+    echo "  domain: ${REALITY_SUBDOMAIN}.${BASE_DOMAIN} (DNS-only/grey-cloud -- do NOT enable the Cloudflare proxy for this record)"
+    echo "  public/client port: 443"
+    echo "  internal Xray port: ${REALITY_PORT}"
+    echo "  impersonating: ${REALITY_DEST}"
+    echo
+  fi
+
   echo "Firewall:"
-  echo "  allowed: 443/tcp from Cloudflare IP ranges only (SSH is left untouched by this script)"
-  echo "  denied: public 443/tcp, 80/tcp, ${PANEL_PORT}/tcp, ${SUB_PORT}/tcp, ${WS_PORT}/tcp, ${GRPC_PORT}/tcp, ${XHTTP_PORT}/tcp"
+  echo "  allowed: 443/tcp from anywhere (shared by CDN, Reality and NaiveProxy via SNI-based routing); SSH is left untouched by this script"
+  echo "  denied: public 80/tcp, ${PANEL_PORT}/tcp, ${SUB_PORT}/tcp, ${WS_PORT}/tcp, ${GRPC_PORT}/tcp, ${XHTTP_PORT}/tcp${REALITY_PORT:+, ${REALITY_PORT}/tcp}"
   echo
 
   read -r -p "Continue? [y/N]: " answer
@@ -993,6 +1094,7 @@ configure_ufw() {
   local prev_ws_port=""
   local prev_grpc_port=""
   local prev_xhttp_port=""
+  local prev_reality_port=""
 
   if [[ -f "$STATE_FILE" ]]; then
     # shellcheck disable=SC1090
@@ -1002,16 +1104,18 @@ configure_ufw() {
     prev_ws_port="${STATE_WS_PORT:-}"
     prev_grpc_port="${STATE_GRPC_PORT:-}"
     prev_xhttp_port="${STATE_XHTTP_PORT:-}"
+    prev_reality_port="${STATE_REALITY_PORT:-}"
   fi
 
   # Remove stale deny rules left over from a previous run with different ports.
-  for stale_port in "$prev_panel_port" "$prev_sub_port" "$prev_ws_port" "$prev_grpc_port" "$prev_xhttp_port"; do
+  for stale_port in "$prev_panel_port" "$prev_sub_port" "$prev_ws_port" "$prev_grpc_port" "$prev_xhttp_port" "$prev_reality_port"; do
     if [[ -n "$stale_port" ]] &&
        [[ "$stale_port" != "$PANEL_PORT" ]] &&
        [[ "$stale_port" != "$SUB_PORT" ]] &&
        [[ "$stale_port" != "$WS_PORT" ]] &&
        [[ "$stale_port" != "$GRPC_PORT" ]] &&
-       [[ "$stale_port" != "$XHTTP_PORT" ]]; then
+       [[ "$stale_port" != "$XHTTP_PORT" ]] &&
+       [[ "$stale_port" != "${REALITY_PORT:-}" ]]; then
       ufw delete deny "${stale_port}/tcp" || true
     fi
   done
@@ -1033,6 +1137,7 @@ configure_ufw() {
   ufw deny "${WS_PORT}/tcp" || true
   ufw deny "${GRPC_PORT}/tcp" || true
   ufw deny "${XHTTP_PORT}/tcp" || true
+  [[ -z "${REALITY_PORT:-}" ]] || ufw deny "${REALITY_PORT}/tcp" || true
 
   ufw --force enable
   ufw reload
@@ -1043,6 +1148,7 @@ STATE_SUB_PORT=${SUB_PORT}
 STATE_WS_PORT=${WS_PORT}
 STATE_GRPC_PORT=${GRPC_PORT}
 STATE_XHTTP_PORT=${XHTTP_PORT}
+STATE_REALITY_PORT=${REALITY_PORT:-}
 EOF
   chmod 600 "$STATE_FILE"
 }
@@ -1087,9 +1193,18 @@ print_summary() {
   echo "  URL: https://${panel_domain}${SUB_PATH}/"
   echo "  internal port: ${SUB_PORT}"
   echo
+  if [[ -n "$REALITY_SUBDOMAIN" ]]; then
+    echo "VLESS Reality (direct connection, no CDN):"
+    echo "  domain: ${REALITY_SUBDOMAIN}.${BASE_DOMAIN}"
+    echo "  public/client port: 443"
+    echo "  internal Xray port: ${REALITY_PORT}"
+    echo "  impersonating: ${REALITY_DEST}"
+    echo
+  fi
+
   echo "UFW:"
-  echo "  allowed: 443/tcp from Cloudflare IP ranges only (SSH is left untouched by this script)"
-  echo "  denied: public 443/tcp, 80/tcp, ${PANEL_PORT}/tcp, ${SUB_PORT}/tcp, ${WS_PORT}/tcp, ${GRPC_PORT}/tcp, ${XHTTP_PORT}/tcp"
+  echo "  allowed: 443/tcp from anywhere (shared by CDN, Reality and NaiveProxy via SNI-based routing); SSH is left untouched by this script"
+  echo "  denied: public 80/tcp, ${PANEL_PORT}/tcp, ${SUB_PORT}/tcp, ${WS_PORT}/tcp, ${GRPC_PORT}/tcp, ${XHTTP_PORT}/tcp${REALITY_PORT:+, ${REALITY_PORT}/tcp}"
   echo
   echo "Files:"
   echo "  Nginx site: ${NGINX_SITE}"
@@ -1366,7 +1481,7 @@ uninstall_all() {
     fi
     ufw delete deny 443/tcp >/dev/null 2>&1 || true
     ufw delete deny 80/tcp >/dev/null 2>&1 || true
-    for p in "${PANEL_PORT:-}" "${SUB_PORT:-}" "${WS_PORT:-}" "${GRPC_PORT:-}" "${XHTTP_PORT:-}"; do
+    for p in "${PANEL_PORT:-}" "${SUB_PORT:-}" "${WS_PORT:-}" "${GRPC_PORT:-}" "${XHTTP_PORT:-}" "${REALITY_PORT:-}"; do
       [[ -n "$p" ]] && ufw delete deny "${p}/tcp" >/dev/null 2>&1 || true
     done
     ufw reload >/dev/null 2>&1 || true
