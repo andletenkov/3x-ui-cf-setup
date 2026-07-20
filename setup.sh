@@ -153,6 +153,7 @@ NAIVE_SUBDOMAIN="${NAIVE_SUBDOMAIN}"
 NAIVE_PORT="${NAIVE_PORT}"
 NAIVE_USERNAME="${NAIVE_USERNAME}"
 NAIVE_PASSWORD="${NAIVE_PASSWORD}"
+CLOUDFLARE_API_TOKEN="${CLOUDFLARE_API_TOKEN}"
 NGINX_CDN_PORT="${NGINX_CDN_PORT}"
 NGINX_DECOY_PORT="${NGINX_DECOY_PORT}"
 VPS_COUNTRY_CODE="${VPS_COUNTRY_CODE}"
@@ -940,8 +941,11 @@ EOF
   chmod 644 "$CADDYFILE"
 
   if [[ -x "$NAIVE_BIN" ]]; then
-    "$NAIVE_BIN" validate --config "$CADDYFILE" ||
-      die "Generated Caddyfile failed 'caddy validate'; check ${CADDYFILE}."
+    # NaiveProxy's Caddy fork may not support 'validate'; skip if unsupported.
+    if "$NAIVE_BIN" help validate &>/dev/null; then
+      "$NAIVE_BIN" validate --config "$CADDYFILE" ||
+        die "Generated Caddyfile failed 'caddy validate'; check ${CADDYFILE}."
+    fi
   fi
 }
 
