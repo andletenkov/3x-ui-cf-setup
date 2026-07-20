@@ -937,6 +937,54 @@ cf_real_ip_env() {
   [ "$unique_uuid_count" = "1" ]
 }
 
+@test "print_client_links omits the Reality URI when disabled" {
+  CLIENT_UUID="11111111-2222-3333-4444-555555555555"
+  WS_PATH="/api/v1/events"
+  GRPC_SERVICE="api.v1.SyncService"
+  XHTTP_PATH="/api/v1/ingest/abcd1234"
+  INBOUND_REMARK_WS="ws-cdn"
+  INBOUND_REMARK_GRPC="grpc-cdn"
+  INBOUND_REMARK_XHTTP="xhttp-cdn"
+  VLESS_SUBDOMAIN="vpn"
+  BASE_DOMAIN="example.com"
+  XUI_USERNAME="u"
+  XUI_PASSWORD="p"
+  PANEL_SUBDOMAIN="admin"
+  PANEL_PATH="/admin"
+  VLESS_ENCRYPTION_CLIENT_KEY="mlkem768-client-stub"
+  REALITY_SUBDOMAIN=""
+
+  run print_client_links
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"security=reality"* ]]
+}
+
+@test "print_client_links emits a Reality VLESS URI when enabled" {
+  CLIENT_UUID="11111111-2222-3333-4444-555555555555"
+  WS_PATH="/api/v1/events"
+  GRPC_SERVICE="api.v1.SyncService"
+  XHTTP_PATH="/api/v1/ingest/abcd1234"
+  INBOUND_REMARK_WS="ws-cdn"
+  INBOUND_REMARK_GRPC="grpc-cdn"
+  INBOUND_REMARK_XHTTP="xhttp-cdn"
+  VLESS_SUBDOMAIN="vpn"
+  BASE_DOMAIN="example.com"
+  XUI_USERNAME="u"
+  XUI_PASSWORD="p"
+  PANEL_SUBDOMAIN="admin"
+  PANEL_PATH="/admin"
+  VLESS_ENCRYPTION_CLIENT_KEY="mlkem768-client-stub"
+  REALITY_SUBDOMAIN="reality"
+  REALITY_DEST="github.com"
+  REALITY_PUBLIC_KEY="reality-pub-stub"
+  REALITY_SHORT_ID="abcd1234"
+  INBOUND_REMARK_REALITY="reality-remark"
+
+  run print_client_links
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"vless://11111111-2222-3333-4444-555555555555@reality.example.com:443?type=tcp&security=reality&pbk=reality-pub-stub&fp=chrome&sni=github.com&sid=abcd1234&flow=xtls-rprx-vision#reality-remark"* ]]
+}
+
 # ---------------------------------------------------------------------------
 # print_summary
 # ---------------------------------------------------------------------------
@@ -1077,6 +1125,58 @@ print_summary_env() {
 }
 
 # ---------------------------------------------------------------------------
+# VLESS+Reality -- optional direct-connection inbound, static assertions
+# for the same BASH_SOURCE-guard reason as the VLESS Encryption tests above.
+# ---------------------------------------------------------------------------
+
+@test "ensure_reality_keys calls getNewX25519Cert and is a no-op when Reality is disabled" {
+  local installer="${BATS_TEST_DIRNAME}/../setup-3x-ui.sh"
+
+  run grep -A25 '^ensure_reality_keys()' "$installer"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'/panel/api/server/getNewX25519Cert'* ]]
+  [[ "$output" == *'[[ -n "$REALITY_SUBDOMAIN" ]] || return 0'* ]]
+}
+
+@test "ensure_reality_inbound skips creation when REALITY_SUBDOMAIN is empty" {
+  local installer="${BATS_TEST_DIRNAME}/../setup-3x-ui.sh"
+
+  run grep -A6 '^ensure_reality_inbound()' "$installer"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"skipping Reality inbound"* ]]
+}
+
+@test "ensure_reality_inbound builds realitySettings with target, serverNames and shortIds" {
+  local installer="${BATS_TEST_DIRNAME}/../setup-3x-ui.sh"
+
+  run grep -A70 '^ensure_reality_inbound()' "$installer"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"'security': 'reality'"* ]]
+  [[ "$output" == *"'target': f\"{os.environ['REALITY_DEST_ARG']}:443\""* ]]
+  [[ "$output" == *"'serverNames': [os.environ['REALITY_DEST_ARG']]"* ]]
+  [[ "$output" == *"'shortIds': [os.environ['REALITY_SHORT_ID_ARG']]"* ]]
+}
+
+@test "ensure_reality_inbound passes flow xtls-rprx-vision and leaves decryption at none" {
+  local installer="${BATS_TEST_DIRNAME}/../setup-3x-ui.sh"
+
+  run grep 'xui_add_inbound "\$REALITY_PORT"' "$installer"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'"none" "xtls-rprx-vision"'* ]]
+}
+
+@test "main calls ensure_reality_keys and ensure_reality_inbound and reports both keys" {
+  local installer="${BATS_TEST_DIRNAME}/../setup-3x-ui.sh"
+
+  run grep -A15 '^main() {' "$installer"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ensure_reality_keys"* ]]
+  [[ "$output" == *"ensure_reality_inbound"* ]]
+  [[ "$output" == *'REALITY_PRIVATE_KEY=%s'* ]]
+  [[ "$output" == *'REALITY_PUBLIC_KEY=%s'* ]]
+}
+
+# ---------------------------------------------------------------------------
 # install_3xui_and_inbounds -- stubs the real install-3xui.sh via
 # INSTALL_3XUI_SCRIPT so no network/root access is required.
 # ---------------------------------------------------------------------------
@@ -1103,6 +1203,13 @@ printf 'CLIENT_UUID=%s\n' "${CLIENT_UUID:-11111111-2222-3333-4444-555555555555}"
 printf 'CLIENT_SUB_ID=%s\n' "${CLIENT_SUB_ID:-abcdef1234567890}"
 printf 'VLESS_ENCRYPTION_SERVER_KEY=%s\n' "${VLESS_ENCRYPTION_SERVER_KEY:-mlkem768-server-stub}"
 printf 'VLESS_ENCRYPTION_CLIENT_KEY=%s\n' "${VLESS_ENCRYPTION_CLIENT_KEY:-mlkem768-client-stub}"
+if [[ -n "${REALITY_SUBDOMAIN:-}" ]]; then
+  printf 'REALITY_PRIVATE_KEY=%s\n' "${REALITY_PRIVATE_KEY:-reality-priv-stub}"
+  printf 'REALITY_PUBLIC_KEY=%s\n' "${REALITY_PUBLIC_KEY:-reality-pub-stub}"
+else
+  printf 'REALITY_PRIVATE_KEY=\n'
+  printf 'REALITY_PUBLIC_KEY=\n'
+fi
 EOF
   chmod +x "$stub_path"
 }
@@ -1140,6 +1247,126 @@ EOF
   [ "$XUI_USERNAME" == "admin_generated" ]
   [ "$XUI_PASSWORD" == "generated-pass-1234" ]
   [[ "$CLIENT_UUID" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]
+}
+
+@test "install_3xui_and_inbounds captures Reality keys when REALITY_SUBDOMAIN is set" {
+  CONFIG_FILE="${BATS_TEST_TMPDIR}/xui-proxy.conf"
+  PANEL_PORT="51234"
+  WS_PORT="51235"
+  WS_PATH="/api/v1/events"
+  GRPC_PORT="51236"
+  GRPC_SERVICE="api.v1.SyncService"
+  SUB_PORT="2096"
+  SUB_PATH="/sub"
+  CLIENT_UUID=""
+  BASE_DOMAIN="example.com"
+  PANEL_SUBDOMAIN="admin"
+  VLESS_SUBDOMAIN="vpn"
+  EMAIL="user@example.com"
+  REALITY_SUBDOMAIN="reality"
+  REALITY_DEST="github.com"
+  REALITY_PORT="20000"
+  REALITY_SHORT_ID="abcd1234"
+
+  local stub="${BATS_TEST_TMPDIR}/install-3xui.sh"
+  write_installer_stub "$stub"
+  export INSTALL_3XUI_SCRIPT="$stub"
+
+  install_3xui_and_inbounds
+  [ "$REALITY_PRIVATE_KEY" == "reality-priv-stub" ]
+  [ "$REALITY_PUBLIC_KEY" == "reality-pub-stub" ]
+}
+
+@test "install_3xui_and_inbounds does not require Reality keys when REALITY_SUBDOMAIN is unset" {
+  CONFIG_FILE="${BATS_TEST_TMPDIR}/xui-proxy.conf"
+  PANEL_PORT="51234"
+  WS_PORT="51235"
+  WS_PATH="/api/v1/events"
+  GRPC_PORT="51236"
+  GRPC_SERVICE="api.v1.SyncService"
+  SUB_PORT="2096"
+  SUB_PATH="/sub"
+  CLIENT_UUID=""
+  BASE_DOMAIN="example.com"
+  PANEL_SUBDOMAIN="admin"
+  VLESS_SUBDOMAIN="vpn"
+  EMAIL="user@example.com"
+  REALITY_SUBDOMAIN=""
+
+  local stub="${BATS_TEST_TMPDIR}/install-3xui.sh"
+  write_installer_stub "$stub"
+  export INSTALL_3XUI_SCRIPT="$stub"
+
+  run install_3xui_and_inbounds
+  [ "$status" -eq 0 ]
+}
+
+@test "install_3xui_and_inbounds dies if REALITY_SUBDOMAIN is set but the installer reports no Reality keys" {
+  CONFIG_FILE="${BATS_TEST_TMPDIR}/xui-proxy.conf"
+  PANEL_PORT="51234"
+  WS_PORT="51235"
+  WS_PATH="/api/v1/events"
+  GRPC_PORT="51236"
+  GRPC_SERVICE="api.v1.SyncService"
+  SUB_PORT="2096"
+  SUB_PATH="/sub"
+  CLIENT_UUID=""
+  BASE_DOMAIN="example.com"
+  PANEL_SUBDOMAIN="admin"
+  VLESS_SUBDOMAIN="vpn"
+  EMAIL="user@example.com"
+  REALITY_SUBDOMAIN="reality"
+  REALITY_DEST="github.com"
+  REALITY_PORT="20000"
+  REALITY_SHORT_ID="abcd1234"
+
+  local stub="${BATS_TEST_TMPDIR}/install-3xui.sh"
+  cat > "$stub" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'PANEL_PORT=%s\n' "${PANEL_PORT}"
+printf 'PANEL_PATH=/generated-base-path\n'
+printf 'XUI_USERNAME=admin_generated\n'
+printf 'XUI_PASSWORD=generated-pass-1234\n'
+printf 'CLIENT_UUID=11111111-2222-3333-4444-555555555555\n'
+printf 'VLESS_ENCRYPTION_SERVER_KEY=mlkem768-server-stub\n'
+printf 'VLESS_ENCRYPTION_CLIENT_KEY=mlkem768-client-stub\n'
+EOF
+  chmod +x "$stub"
+  export INSTALL_3XUI_SCRIPT="$stub"
+
+  run install_3xui_and_inbounds
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"did not report REALITY_PRIVATE_KEY/REALITY_PUBLIC_KEY"* ]]
+}
+
+@test "install_3xui_and_inbounds forwards REALITY_DOMAIN as REALITY_SUBDOMAIN.BASE_DOMAIN" {
+  CONFIG_FILE="${BATS_TEST_TMPDIR}/xui-proxy.conf"
+  PANEL_PORT="51234"
+  WS_PORT="51235"
+  WS_PATH="/api/v1/events"
+  GRPC_PORT="51236"
+  GRPC_SERVICE="api.v1.SyncService"
+  SUB_PORT="2096"
+  SUB_PATH="/sub"
+  CLIENT_UUID=""
+  BASE_DOMAIN="example.com"
+  PANEL_SUBDOMAIN="admin"
+  VLESS_SUBDOMAIN="vpn"
+  EMAIL="user@example.com"
+  REALITY_SUBDOMAIN="reality"
+  REALITY_DEST="github.com"
+  REALITY_PORT="20000"
+  REALITY_SHORT_ID="abcd1234"
+
+  local stub="${BATS_TEST_TMPDIR}/install-3xui.sh"
+  local received_log="${BATS_TEST_TMPDIR}/received-reality-domain"
+  write_installer_stub "$stub" "echo \"\${REALITY_DOMAIN}\" > '${received_log}'"
+  export INSTALL_3XUI_SCRIPT="$stub"
+
+  run install_3xui_and_inbounds
+  [ "$status" -eq 0 ]
+  [ "$(cat "$received_log")" == "reality.example.com" ]
 }
 
 @test "install_3xui_and_inbounds passes the pre-reserved PANEL_PORT to the installer as-is" {

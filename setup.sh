@@ -39,6 +39,8 @@ REALITY_SUBDOMAIN=""
 REALITY_DEST=""
 REALITY_PORT=""
 REALITY_SHORT_ID=""
+REALITY_PRIVATE_KEY=""
+REALITY_PUBLIC_KEY=""
 
 VPS_FLAG=""
 # Optional ISO 3166-1 alpha-2 country code for inbound labels. When unset,
@@ -129,6 +131,8 @@ REALITY_SUBDOMAIN="${REALITY_SUBDOMAIN}"
 REALITY_DEST="${REALITY_DEST}"
 REALITY_PORT="${REALITY_PORT}"
 REALITY_SHORT_ID="${REALITY_SHORT_ID}"
+REALITY_PRIVATE_KEY="${REALITY_PRIVATE_KEY}"
+REALITY_PUBLIC_KEY="${REALITY_PUBLIC_KEY}"
 VPS_COUNTRY_CODE="${VPS_COUNTRY_CODE}"
 EOF
   chmod 600 "$CONFIG_FILE"
@@ -1297,6 +1301,13 @@ install_3xui_and_inbounds() {
     CLIENT_SUB_ID="$CLIENT_SUB_ID" \
     VLESS_ENCRYPTION_SERVER_KEY="${VLESS_ENCRYPTION_SERVER_KEY:-}" \
     VLESS_ENCRYPTION_CLIENT_KEY="${VLESS_ENCRYPTION_CLIENT_KEY:-}" \
+    REALITY_SUBDOMAIN="${REALITY_SUBDOMAIN:-}" \
+    REALITY_DEST="${REALITY_DEST:-}" \
+    REALITY_PORT="${REALITY_PORT:-}" \
+    REALITY_SHORT_ID="${REALITY_SHORT_ID:-}" \
+    REALITY_DOMAIN="${REALITY_SUBDOMAIN:+${REALITY_SUBDOMAIN}.${BASE_DOMAIN}}" \
+    REALITY_PRIVATE_KEY="${REALITY_PRIVATE_KEY:-}" \
+    REALITY_PUBLIC_KEY="${REALITY_PUBLIC_KEY:-}" \
     INBOUND_REMARK_WS="${INBOUND_REMARK_WS:-}" \
     INBOUND_REMARK_GRPC="${INBOUND_REMARK_GRPC:-}" \
     INBOUND_REMARK_XHTTP="${INBOUND_REMARK_XHTTP:-}" \
@@ -1314,12 +1325,21 @@ install_3xui_and_inbounds() {
       CLIENT_SUB_ID) CLIENT_SUB_ID="$value" ;;
       VLESS_ENCRYPTION_SERVER_KEY) VLESS_ENCRYPTION_SERVER_KEY="$value" ;;
       VLESS_ENCRYPTION_CLIENT_KEY) VLESS_ENCRYPTION_CLIENT_KEY="$value" ;;
+      REALITY_PRIVATE_KEY) REALITY_PRIVATE_KEY="$value" ;;
+      REALITY_PUBLIC_KEY) REALITY_PUBLIC_KEY="$value" ;;
     esac
   done <<< "$installer_out"
 
   [[ -n "$PANEL_PORT" && -n "$PANEL_PATH" && -n "$XUI_USERNAME" && -n "$XUI_PASSWORD" && -n "$CLIENT_UUID" \
      && -n "$VLESS_ENCRYPTION_SERVER_KEY" && -n "$VLESS_ENCRYPTION_CLIENT_KEY" ]] ||
     die "setup-3x-ui.sh did not report PANEL_PORT/PANEL_PATH/XUI_USERNAME/XUI_PASSWORD/CLIENT_UUID/VLESS_ENCRYPTION_SERVER_KEY/VLESS_ENCRYPTION_CLIENT_KEY."
+
+  # Reality is optional -- only require its keys back when the feature is
+  # actually enabled (REALITY_SUBDOMAIN set).
+  if [[ -n "$REALITY_SUBDOMAIN" ]]; then
+    [[ -n "$REALITY_PRIVATE_KEY" && -n "$REALITY_PUBLIC_KEY" ]] ||
+      die "setup-3x-ui.sh did not report REALITY_PRIVATE_KEY/REALITY_PUBLIC_KEY even though REALITY_SUBDOMAIN is set."
+  fi
 
   validate_panel_port
 
@@ -1355,6 +1375,10 @@ print_client_links() {
   echo "vless://${CLIENT_UUID}@${VLESS_SUBDOMAIN}.${BASE_DOMAIN}:443?type=ws&security=tls&encryption=${VLESS_ENCRYPTION_CLIENT_KEY}&path=$(printf '%s' "$WS_PATH" | sed 's#/#%2F#g')&host=${VLESS_SUBDOMAIN}.${BASE_DOMAIN}#${INBOUND_REMARK_WS}"
   echo "vless://${CLIENT_UUID}@${VLESS_SUBDOMAIN}.${BASE_DOMAIN}:443?type=grpc&security=tls&encryption=${VLESS_ENCRYPTION_CLIENT_KEY}&serviceName=${GRPC_SERVICE}&mode=gun&host=${VLESS_SUBDOMAIN}.${BASE_DOMAIN}#${INBOUND_REMARK_GRPC}"
   echo "vless://${CLIENT_UUID}@${VLESS_SUBDOMAIN}.${BASE_DOMAIN}:443?type=xhttp&security=tls&encryption=${VLESS_ENCRYPTION_CLIENT_KEY}&flow=xtls-rprx-vision&path=$(printf '%s' "$XHTTP_PATH" | sed 's#/#%2F#g')&mode=packet-up&host=${VLESS_SUBDOMAIN}.${BASE_DOMAIN}#${INBOUND_REMARK_XHTTP}"
+
+  if [[ -n "$REALITY_SUBDOMAIN" ]]; then
+    echo "vless://${CLIENT_UUID}@${REALITY_SUBDOMAIN}.${BASE_DOMAIN}:443?type=tcp&security=reality&pbk=${REALITY_PUBLIC_KEY}&fp=chrome&sni=${REALITY_DEST}&sid=${REALITY_SHORT_ID}&flow=xtls-rprx-vision#${INBOUND_REMARK_REALITY}"
+  fi
 }
 
 verify_deployment() {
@@ -1530,6 +1554,7 @@ main() {
   INBOUND_REMARK_WS="${VPS_FLAG} WebSocket-CDN"
   INBOUND_REMARK_GRPC="${VPS_FLAG} gRPC-CDN"
   INBOUND_REMARK_XHTTP="${VPS_FLAG} XHTTP-CDN"
+  INBOUND_REMARK_REALITY="${VPS_FLAG} Reality"
 
   install_packages
   anonymize_vps

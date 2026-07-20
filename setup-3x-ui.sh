@@ -40,6 +40,23 @@
 #                                  panel-generated client links and
 #                                  subscriptions use it instead of the raw
 #                                  listen IP/port); omitted if unset
+#   REALITY_SUBDOMAIN            - enables the optional VLESS+Reality direct-
+#                                  connection inbound when non-empty. Skipped
+#                                  entirely (no inbound created) if empty.
+#   REALITY_DEST                  - required if REALITY_SUBDOMAIN is set: the
+#                                  real, unrelated donor site Reality
+#                                  impersonates (e.g. github.com).
+#   REALITY_PORT                  - required if REALITY_SUBDOMAIN is set: the
+#                                  loopback port Xray's Reality listener binds.
+#   REALITY_SHORT_ID               - required if REALITY_SUBDOMAIN is set.
+#   REALITY_DOMAIN                 - public domain the Reality inbound is
+#                                  reached at (sets externalProxy for correct
+#                                  link generation, same as VLESS_DOMAIN);
+#                                  omitted if unset.
+#   REALITY_PRIVATE_KEY,
+#   REALITY_PUBLIC_KEY             - reuse an existing Reality X25519 keypair,
+#                                  persisted across setup.sh reruns; both
+#                                  generated together if either is empty.
 #   XUI_VERSION                  - 3x-ui release tag to install (e.g. v3.4.0,
 #                                  or dev-latest). Unset/empty installs the
 #                                  latest stable release (installer default).
@@ -52,6 +69,8 @@
 #   CLIENT_UUID=<uuid>
 #   VLESS_ENCRYPTION_SERVER_KEY=<key>
 #   VLESS_ENCRYPTION_CLIENT_KEY=<key>
+#   REALITY_PRIVATE_KEY=<key>       (blank if REALITY_SUBDOMAIN was empty)
+#   REALITY_PUBLIC_KEY=<key>        (blank if REALITY_SUBDOMAIN was empty)
 # setup.sh parses these key=value lines; nothing else should be relied upon.
 # Human-readable progress goes to stderr.
 #
@@ -146,6 +165,13 @@ CLIENT_UUID="${CLIENT_UUID:-}"
 CLIENT_SUB_ID="${CLIENT_SUB_ID:-}"
 VLESS_ENCRYPTION_SERVER_KEY="${VLESS_ENCRYPTION_SERVER_KEY:-}"
 VLESS_ENCRYPTION_CLIENT_KEY="${VLESS_ENCRYPTION_CLIENT_KEY:-}"
+REALITY_SUBDOMAIN="${REALITY_SUBDOMAIN:-}"
+REALITY_DEST="${REALITY_DEST:-}"
+REALITY_PORT="${REALITY_PORT:-}"
+REALITY_SHORT_ID="${REALITY_SHORT_ID:-}"
+REALITY_DOMAIN="${REALITY_DOMAIN:-}"
+REALITY_PRIVATE_KEY="${REALITY_PRIVATE_KEY:-}"
+REALITY_PUBLIC_KEY="${REALITY_PUBLIC_KEY:-}"
 XUI_VERSION="${XUI_VERSION:-}"
 
 generate_uuid() {
@@ -538,6 +564,95 @@ GRPCEOF
   xui_add_inbound "$GRPC_PORT" "$tag" "${INBOUND_REMARK_GRPC:-${_flag} gRPC-CDN}" "$stream_settings" "client" "$VLESS_ENCRYPTION_SERVER_KEY"
 }
 
+# Generates (or reuses, if already passed in via env) a Reality X25519
+# keypair. Distinct from VLESS Encryption's ML-KEM-768 keypair -- Reality
+# uses its own transport-security handshake, unrelated to the VLESS payload
+# encryption feature.
+ensure_reality_keys() {
+  [[ -n "$REALITY_SUBDOMAIN" ]] || return 0
+
+  if [[ -n "$REALITY_PRIVATE_KEY" && -n "$REALITY_PUBLIC_KEY" ]]; then
+    echo "Reusing existing Reality keypair." >&2
+    return
+  fi
+
+  echo "Generating Reality (X25519) keypair..." >&2
+  local resp
+  resp="$(api_curl -X GET "${BASE_URL}/panel/api/server/getNewX25519Cert")"
+
+  REALITY_PRIVATE_KEY="$(python3 -c "
+import json,sys
+try:
+    print(json.loads(sys.argv[1])['obj']['privateKey'])
+except Exception:
+    sys.exit(1)
+" "$resp")" || die "Failed to generate Reality keys. Response: ${resp}"
+
+  REALITY_PUBLIC_KEY="$(python3 -c "
+import json,sys
+try:
+    print(json.loads(sys.argv[1])['obj']['publicKey'])
+except Exception:
+    sys.exit(1)
+" "$resp")" || die "Failed to generate Reality keys. Response: ${resp}"
+
+  [[ -n "$REALITY_PRIVATE_KEY" && -n "$REALITY_PUBLIC_KEY" ]] ||
+    die "3x-ui returned an empty Reality keypair. Response: ${resp}"
+}
+
+# Direct-connection inbound (no CDN/Nginx-terminated TLS in front) --
+# entirely optional, skipped when REALITY_SUBDOMAIN is empty. Reality
+# deliberately keeps 'decryption': 'none' (xui_add_inbound's default): unlike
+# the CDN inbounds, there is no MITM-capable reverse proxy in front of this
+# one for VLESS Encryption to protect against.
+ensure_reality_inbound() {
+  [[ -n "$REALITY_SUBDOMAIN" ]] || {
+    echo "REALITY_SUBDOMAIN not set, skipping Reality inbound." >&2
+    return 0
+  }
+
+  local tag="in-${REALITY_PORT}-reality"
+
+  if xui_inbound_exists "$tag"; then
+    xui_sync_inbound_remark "$tag" "${INBOUND_REMARK_REALITY:-$(detect_country_flag) Reality}"
+    echo "Inbound '${tag}' already exists, skipping creation." >&2
+    return
+  fi
+
+  local stream_settings
+  export REALITY_DEST_ARG="$REALITY_DEST" REALITY_SHORT_ID_ARG="$REALITY_SHORT_ID" \
+    REALITY_PRIVATE_KEY_ARG="$REALITY_PRIVATE_KEY" EXT_DOMAIN="${REALITY_DOMAIN:-}"
+  stream_settings="$(python3 << 'REALITYEOF'
+import json,os
+settings = {
+    'network': 'tcp',
+    'security': 'reality',
+    'realitySettings': {
+        'show': False,
+        'target': f"{os.environ['REALITY_DEST_ARG']}:443",
+        'xver': 0,
+        'serverNames': [os.environ['REALITY_DEST_ARG']],
+        'privateKey': os.environ['REALITY_PRIVATE_KEY_ARG'],
+        'shortIds': [os.environ['REALITY_SHORT_ID_ARG']],
+    },
+}
+if os.environ.get('EXT_DOMAIN'):
+    settings['externalProxy'] = [{
+        'forceTls': 'tls',
+        'dest': os.environ['EXT_DOMAIN'],
+        'port': 443,
+        'remark': '',
+    }]
+print(json.dumps(settings))
+REALITYEOF
+  )"
+
+  echo "Creating inbound '${tag}' (Reality, port ${REALITY_PORT}, impersonating ${REALITY_DEST})..." >&2
+  local _flag
+  _flag="$(detect_country_flag)"
+  xui_add_inbound "$REALITY_PORT" "$tag" "${INBOUND_REMARK_REALITY:-${_flag} Reality}" "$stream_settings" "client" "none" "xtls-rprx-vision"
+}
+
 update_geo_files() {
   local geo_dir="/usr/local/x-ui/bin"
   local geoip_url="https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/release/geoip.dat"
@@ -834,6 +949,8 @@ main() {
   ensure_ws_inbound
   ensure_xhttp_inbound
   ensure_grpc_inbound
+  ensure_reality_keys
+  ensure_reality_inbound
   configure_subscription
   configure_xray_config
 
@@ -847,6 +964,8 @@ main() {
   printf 'CLIENT_SUB_ID=%s\n' "$CLIENT_SUB_ID"
   printf 'VLESS_ENCRYPTION_SERVER_KEY=%s\n' "$VLESS_ENCRYPTION_SERVER_KEY"
   printf 'VLESS_ENCRYPTION_CLIENT_KEY=%s\n' "$VLESS_ENCRYPTION_CLIENT_KEY"
+  printf 'REALITY_PRIVATE_KEY=%s\n' "$REALITY_PRIVATE_KEY"
+  printf 'REALITY_PUBLIC_KEY=%s\n' "$REALITY_PUBLIC_KEY"
 }
 
 main "$@"
