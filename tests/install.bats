@@ -514,44 +514,52 @@ valid_inputs() {
 }
 
 @test "save_config persists Reality fields and load_config restores them" {
+  # Run in a real bash -c subshell (not a direct unwrapped call in this test
+  # process) -- calling save_config/load_config directly here has been
+  # observed to silently drop this test's result under this bats version.
   CONFIG_FILE="${BATS_TEST_TMPDIR}/.3xui-proxy.conf"
-  TIMESTAMP="20260101-000000"
-  BASE_DOMAIN="example.com"
-  PANEL_SUBDOMAIN="admin"
-  VLESS_SUBDOMAIN="vpn"
-  PANEL_PATH="/my-admin"
-  EMAIL="admin@example.com"
-  PANEL_PORT="2053"
-  SUB_PORT="2096"
-  WS_PORT="10001"
-  GRPC_PORT="10002"
-  XHTTP_PORT="10003"
-  WS_PATH="/api/v1/events"
-  GRPC_SERVICE="api.v1.SyncService"
-  XHTTP_PATH="/api/v1/ingest/abcd1234"
-  SUB_PATH="/sub"
-  CLIENT_UUID="00000000-0000-4000-8000-000000000001"
-  CLIENT_SUB_ID="client-sub-id"
-  VLESS_ENCRYPTION_SERVER_KEY="server-key"
-  VLESS_ENCRYPTION_CLIENT_KEY="client-key"
-  REALITY_SUBDOMAIN="reality"
-  REALITY_DEST="github.com"
-  REALITY_PORT="20000"
-  REALITY_SHORT_ID="abcd1234abcd5678"
 
-  save_config
+  run bash -c '
+    source "'"$SCRIPT"'" >/dev/null 2>&1 || true
+    CONFIG_FILE="'"$CONFIG_FILE"'"
+    TIMESTAMP="20260101-000000"
+    BASE_DOMAIN="example.com"
+    PANEL_SUBDOMAIN="admin"
+    VLESS_SUBDOMAIN="vpn"
+    PANEL_PATH="/my-admin"
+    EMAIL="admin@example.com"
+    PANEL_PORT="2053"
+    SUB_PORT="2096"
+    WS_PORT="10001"
+    GRPC_PORT="10002"
+    XHTTP_PORT="10003"
+    WS_PATH="/api/v1/events"
+    GRPC_SERVICE="api.v1.SyncService"
+    XHTTP_PATH="/api/v1/ingest/abcd1234"
+    SUB_PATH="/sub"
+    CLIENT_UUID="00000000-0000-4000-8000-000000000001"
+    CLIENT_SUB_ID="client-sub-id"
+    VLESS_ENCRYPTION_SERVER_KEY="server-key"
+    VLESS_ENCRYPTION_CLIENT_KEY="client-key"
+    REALITY_SUBDOMAIN="reality"
+    REALITY_DEST="github.com"
+    REALITY_PORT="20000"
+    REALITY_SHORT_ID="abcd1234abcd5678"
 
-  REALITY_SUBDOMAIN=""
-  REALITY_DEST=""
-  REALITY_PORT=""
-  REALITY_SHORT_ID=""
+    save_config
 
-  load_config
+    REALITY_SUBDOMAIN=""
+    REALITY_DEST=""
+    REALITY_PORT=""
+    REALITY_SHORT_ID=""
 
-  [ "$REALITY_SUBDOMAIN" == "reality" ]
-  [ "$REALITY_DEST" == "github.com" ]
-  [ "$REALITY_PORT" == "20000" ]
-  [ "$REALITY_SHORT_ID" == "abcd1234abcd5678" ]
+    load_config
+
+    printf "SUBDOMAIN=%s DEST=%s PORT=%s SHORTID=%s\n" "$REALITY_SUBDOMAIN" "$REALITY_DEST" "$REALITY_PORT" "$REALITY_SHORT_ID"
+  '
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"SUBDOMAIN=reality DEST=github.com PORT=20000 SHORTID=abcd1234abcd5678"* ]]
 }
 
 # ---------------------------------------------------------------------------
@@ -1485,6 +1493,257 @@ EOF
   run install_packages
   [ "$status" -eq 0 ]
   [ -f "$NGINX_ORG_LIST" ]
+}
+
+# ---------------------------------------------------------------------------
+# validate_inputs / save_config / confirm_configuration / print_summary --
+# optional NaiveProxy fields
+# ---------------------------------------------------------------------------
+
+@test "validate_inputs accepts a blank NaiveProxy configuration (feature disabled)" {
+  valid_inputs
+  NAIVE_SUBDOMAIN=""
+  run validate_inputs
+  [ "$status" -eq 0 ]
+}
+
+@test "validate_inputs accepts a fully populated NaiveProxy configuration" {
+  valid_inputs
+  NAIVE_SUBDOMAIN="naive"
+  NAIVE_PORT="21000"
+  run validate_inputs
+  [ "$status" -eq 0 ]
+}
+
+@test "validate_inputs rejects a NaiveProxy subdomain equal to the panel subdomain" {
+  valid_inputs
+  NAIVE_SUBDOMAIN="$PANEL_SUBDOMAIN"
+  NAIVE_PORT="21000"
+  run validate_inputs
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"different from the panel subdomain"* ]]
+}
+
+@test "validate_inputs rejects a NaiveProxy subdomain equal to the Reality subdomain" {
+  valid_inputs
+  REALITY_SUBDOMAIN="reality"
+  REALITY_DEST="github.com"
+  REALITY_PORT="20000"
+  NAIVE_SUBDOMAIN="reality"
+  NAIVE_PORT="21000"
+  run validate_inputs
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"different from the Reality subdomain"* ]]
+}
+
+@test "validate_inputs rejects a NaiveProxy port colliding with the Reality port" {
+  valid_inputs
+  REALITY_SUBDOMAIN="reality"
+  REALITY_DEST="github.com"
+  REALITY_PORT="20000"
+  NAIVE_SUBDOMAIN="naive"
+  NAIVE_PORT="20000"
+  run validate_inputs
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"NaiveProxy port must be different from every other internal port"* ]]
+}
+
+@test "validate_inputs rejects a NaiveProxy port of 443" {
+  valid_inputs
+  NAIVE_SUBDOMAIN="naive"
+  NAIVE_PORT="443"
+  run validate_inputs
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"NaiveProxy port cannot be 443"* ]]
+}
+
+@test "save_config persists NaiveProxy fields and load_config restores them" {
+  # See the equivalent Reality test above for why this runs in a real
+  # bash -c subshell instead of calling save_config/load_config directly.
+  CONFIG_FILE="${BATS_TEST_TMPDIR}/.3xui-proxy.conf"
+
+  run bash -c '
+    source "'"$SCRIPT"'" >/dev/null 2>&1 || true
+    CONFIG_FILE="'"$CONFIG_FILE"'"
+    TIMESTAMP="20260101-000000"
+    BASE_DOMAIN="example.com"
+    PANEL_SUBDOMAIN="admin"
+    VLESS_SUBDOMAIN="vpn"
+    PANEL_PATH="/my-admin"
+    EMAIL="admin@example.com"
+    PANEL_PORT="2053"
+    SUB_PORT="2096"
+    WS_PORT="10001"
+    GRPC_PORT="10002"
+    XHTTP_PORT="10003"
+    WS_PATH="/api/v1/events"
+    GRPC_SERVICE="api.v1.SyncService"
+    XHTTP_PATH="/api/v1/ingest/abcd1234"
+    SUB_PATH="/sub"
+    CLIENT_UUID="00000000-0000-4000-8000-000000000001"
+    CLIENT_SUB_ID="client-sub-id"
+    VLESS_ENCRYPTION_SERVER_KEY="server-key"
+    VLESS_ENCRYPTION_CLIENT_KEY="client-key"
+    NAIVE_SUBDOMAIN="naive"
+    NAIVE_PORT="21000"
+    NAIVE_USERNAME="user_abcd1234"
+    NAIVE_PASSWORD="supersecretpassword"
+
+    save_config
+
+    NAIVE_SUBDOMAIN=""
+    NAIVE_PORT=""
+    NAIVE_USERNAME=""
+    NAIVE_PASSWORD=""
+
+    load_config
+
+    printf "SUBDOMAIN=%s PORT=%s USERNAME=%s PASSWORD=%s\n" "$NAIVE_SUBDOMAIN" "$NAIVE_PORT" "$NAIVE_USERNAME" "$NAIVE_PASSWORD"
+  '
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"SUBDOMAIN=naive PORT=21000 USERNAME=user_abcd1234 PASSWORD=supersecretpassword"* ]]
+}
+
+@test "confirm_configuration shows the NaiveProxy section when enabled" {
+  valid_inputs
+  NAIVE_SUBDOMAIN="naive"
+  NAIVE_PORT="21000"
+  NAIVE_USERNAME="user_abcd1234"
+
+  run confirm_configuration <<< "y"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"NaiveProxy (direct connection, no CDN):"* ]]
+  [[ "$output" == *"domain: naive.example.com"* ]]
+  [[ "$output" == *"internal Caddy port: 21000"* ]]
+  [[ "$output" == *"username: user_abcd1234"* ]]
+  [[ "$output" == *"21000/tcp"* ]]
+}
+
+@test "confirm_configuration omits the NaiveProxy section when disabled" {
+  valid_inputs
+  NAIVE_SUBDOMAIN=""
+
+  run confirm_configuration <<< "y"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"NaiveProxy"* ]]
+}
+
+@test "print_summary shows the NaiveProxy section including the password when enabled" {
+  print_summary_env
+  REALITY_SUBDOMAIN=""
+  NAIVE_SUBDOMAIN="naive"
+  NAIVE_PORT="21000"
+  NAIVE_USERNAME="user_abcd1234"
+  NAIVE_PASSWORD="supersecretpassword"
+
+  run print_summary
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"NaiveProxy (direct connection, no CDN):"* ]]
+  [[ "$output" == *"domain: naive.example.com"* ]]
+  [[ "$output" == *"username: user_abcd1234"* ]]
+  [[ "$output" == *"password: supersecretpassword"* ]]
+  [[ "$output" == *"21000/tcp"* ]]
+}
+
+# ---------------------------------------------------------------------------
+# naive_map_arch / install_naiveproxy
+# ---------------------------------------------------------------------------
+
+@test "naive_map_arch maps common uname -m values to naiveproxy release arches" {
+  [ "$(naive_map_arch x86_64)" == "x64" ]
+  [ "$(naive_map_arch amd64)" == "x64" ]
+  [ "$(naive_map_arch aarch64)" == "arm64" ]
+  [ "$(naive_map_arch arm64)" == "arm64" ]
+  [ "$(naive_map_arch armv7l)" == "arm" ]
+  [ "$(naive_map_arch i686)" == "x86" ]
+}
+
+@test "naive_map_arch dies on an unrecognized architecture" {
+  run naive_map_arch "made-up-arch"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"Unsupported architecture for NaiveProxy"* ]]
+}
+
+naive_env() {
+  NAIVE_SUBDOMAIN="naive"
+  NAIVE_BIN="${BATS_TEST_TMPDIR}/caddy"
+  NAIVE_VERSION_FILE="${BATS_TEST_TMPDIR}/naiveproxy/.installed-version"
+}
+
+@test "install_naiveproxy skips entirely when NAIVE_SUBDOMAIN is unset" {
+  NAIVE_SUBDOMAIN=""
+  NAIVE_BIN="${BATS_TEST_TMPDIR}/caddy"
+  NAIVE_VERSION_FILE="${BATS_TEST_TMPDIR}/naiveproxy/.installed-version"
+
+  run install_naiveproxy
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"NAIVE_SUBDOMAIN not set, skipping"* ]]
+  [ ! -e "$NAIVE_BIN" ]
+}
+
+@test "install_naiveproxy downloads, extracts and installs the caddy binary" {
+  naive_env
+
+  run install_naiveproxy
+  [ "$status" -eq 0 ]
+  [ -x "$NAIVE_BIN" ]
+  [ "$(cat "$NAIVE_VERSION_FILE")" == "v150.0.0.0-1" ]
+  [[ "$output" == *"NaiveProxy v150.0.0.0-1 installed"* ]]
+}
+
+@test "install_naiveproxy is idempotent when the installed version already matches" {
+  naive_env
+
+  install_naiveproxy
+  local first_mtime
+  first_mtime="$(cat "$NAIVE_BIN")"
+
+  run install_naiveproxy
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"already installed, skipping"* ]]
+  [ "$(cat "$NAIVE_BIN")" == "$first_mtime" ]
+}
+
+@test "install_naiveproxy re-downloads when the release tag changes" {
+  naive_env
+
+  install_naiveproxy
+  [ "$(cat "$NAIVE_VERSION_FILE")" == "v150.0.0.0-1" ]
+
+  export NAIVE_RELEASE_JSON='{"tag_name":"v151.0.0.0-1","assets":[{"name":"naiveproxy-v151.0.0.0-1-linux-x64.tar.xz","browser_download_url":"https://example.test/naiveproxy-v151.0.0.0-1-linux-x64.tar.xz"}]}'
+
+  run install_naiveproxy
+  [ "$status" -eq 0 ]
+  [ "$(cat "$NAIVE_VERSION_FILE")" == "v151.0.0.0-1" ]
+}
+
+@test "install_naiveproxy fails clearly when the release metadata fetch fails" {
+  naive_env
+  export CURL_SHOULD_FAIL=1
+
+  run install_naiveproxy
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"Failed to fetch the latest NaiveProxy release metadata"* ]]
+}
+
+@test "install_naiveproxy fails clearly when no asset matches this architecture" {
+  naive_env
+  export NAIVE_RELEASE_JSON='{"tag_name":"v150.0.0.0-1","assets":[{"name":"naiveproxy-v150.0.0.0-1-linux-riscv64.tar.xz","browser_download_url":"https://example.test/naiveproxy-v150.0.0.0-1-linux-riscv64.tar.xz"}]}'
+
+  run install_naiveproxy
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"Could not find NaiveProxy release asset"* ]]
+}
+
+@test "install_naiveproxy fails clearly when extraction fails" {
+  naive_env
+  export TAR_SHOULD_FAIL=1
+
+  run install_naiveproxy
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"Failed to extract NaiveProxy release archive"* ]]
+  [ ! -e "$NAIVE_BIN" ]
 }
 
 @test "install_3xui_and_inbounds forwards generated inbound remarks to the panel helper" {

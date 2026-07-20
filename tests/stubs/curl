@@ -5,6 +5,9 @@
 #   CURL_CF_IPV4="1.1.1.0/24"   -> body returned for https://www.cloudflare.com/ips-v4
 #   CURL_CF_IPV6="2400:cb00::/32" -> body returned for https://www.cloudflare.com/ips-v6
 #   CURL_HTTP_CODE=200          -> code printed when -w '%{http_code}' is used
+#   NAIVE_RELEASE_JSON=<json>   -> body returned for the naiveproxy releases API
+#                                  (defaults to a canned v150.0.0.0-1 release
+#                                  with linux-x64/linux-arm64 assets)
 set -eu
 
 if [[ -n "${CURL_SHOULD_FAIL:-}" ]]; then
@@ -13,11 +16,17 @@ fi
 
 url=""
 write_out=""
+out_file=""
+prev_arg=""
 for arg in "$@"; do
   case "$arg" in
     http*://*) url="$arg" ;;
     '%{http_code}') write_out="http_code" ;;
   esac
+  if [[ "$prev_arg" == "-o" ]]; then
+    out_file="$arg"
+  fi
+  prev_arg="$arg"
 done
 
 if [[ "$write_out" == "http_code" ]]; then
@@ -25,13 +34,24 @@ if [[ "$write_out" == "http_code" ]]; then
   exit 0
 fi
 
+default_naive_release_json='{"tag_name":"v150.0.0.0-1","assets":[{"name":"naiveproxy-v150.0.0.0-1-linux-x64.tar.xz","browser_download_url":"https://example.test/naiveproxy-v150.0.0.0-1-linux-x64.tar.xz"},{"name":"naiveproxy-v150.0.0.0-1-linux-arm64.tar.xz","browser_download_url":"https://example.test/naiveproxy-v150.0.0.0-1-linux-arm64.tar.xz"},{"name":"naiveproxy-v150.0.0.0-1-linux-arm.tar.xz","browser_download_url":"https://example.test/naiveproxy-v150.0.0.0-1-linux-arm.tar.xz"}]}'
+
+body=""
 case "$url" in
-  *ipapi.co/country*) printf '%s' "${CURL_COUNTRY_CODE:-}" ;;
-  *ifconfig.co/country-iso*) printf '%s' "${CURL_COUNTRY_CODE:-}" ;;
-  *ip-api.com*) printf '%s' "${CURL_COUNTRY_CODE:-}" ;;
-  *ips-v4*) printf '%s\n' "${CURL_CF_IPV4:-1.1.1.0/24}" ;;
-  *ips-v6*) printf '%s\n' "${CURL_CF_IPV6:-2400:cb00::/32}" ;;
-  *) printf '' ;;
+  *ipapi.co/country*) body="${CURL_COUNTRY_CODE:-}" ;;
+  *ifconfig.co/country-iso*) body="${CURL_COUNTRY_CODE:-}" ;;
+  *ip-api.com*) body="${CURL_COUNTRY_CODE:-}" ;;
+  *ips-v4*) body="$(printf '%s\n' "${CURL_CF_IPV4:-1.1.1.0/24}")" ;;
+  *ips-v6*) body="$(printf '%s\n' "${CURL_CF_IPV6:-2400:cb00::/32}")" ;;
+  *api.github.com/repos/klzgrad/naiveproxy*) body="${NAIVE_RELEASE_JSON:-$default_naive_release_json}" ;;
+  *naiveproxy-*.tar.xz) body="fake-naiveproxy-archive-bytes" ;;
+  *) body="" ;;
 esac
+
+if [[ -n "$out_file" ]]; then
+  printf '%s' "$body" > "$out_file"
+else
+  printf '%s' "$body"
+fi
 
 exit 0

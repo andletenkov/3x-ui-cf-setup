@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Stub for `tar`. Only supports the `-xJf ARCHIVE -C DESTDIR` invocation used
+# by install_naiveproxy(): instead of really decompressing xz (the curl stub
+# never produces a real archive), it "extracts" by creating a fake caddy
+# binary under DESTDIR, which install_naiveproxy() then locates via `find`.
+#
+#   TAR_SHOULD_FAIL=1  -> non-zero exit (simulates a corrupt/invalid archive)
+set -eu
+
+if [[ -n "${TAR_SHOULD_FAIL:-}" ]]; then
+  exit 1
+fi
+
+destdir=""
+prev_arg=""
+for arg in "$@"; do
+  if [[ "$prev_arg" == "-C" ]]; then
+    destdir="$arg"
+  fi
+  prev_arg="$arg"
+done
+
+if [[ -n "$destdir" ]]; then
+  mkdir -p "${destdir}/naiveproxy-fake"
+  printf '#!/bin/sh\necho fake-caddy\n' > "${destdir}/naiveproxy-fake/caddy"
+  chmod +x "${destdir}/naiveproxy-fake/caddy"
+fi
+
+exit 0

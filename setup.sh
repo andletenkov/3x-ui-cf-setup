@@ -42,6 +42,14 @@ REALITY_SHORT_ID=""
 REALITY_PRIVATE_KEY=""
 REALITY_PUBLIC_KEY=""
 
+# Optional NaiveProxy deployment (Caddy + forwardproxy, direct connection,
+# no CDN). Blank NAIVE_SUBDOMAIN disables the feature entirely. Reuses the
+# existing wildcard cert -- Caddy does not manage its own ACME certificate.
+NAIVE_SUBDOMAIN=""
+NAIVE_PORT=""
+NAIVE_USERNAME=""
+NAIVE_PASSWORD=""
+
 VPS_FLAG=""
 # Optional ISO 3166-1 alpha-2 country code for inbound labels. When unset,
 # the code is detected from the server's public IP.
@@ -133,6 +141,10 @@ REALITY_PORT="${REALITY_PORT}"
 REALITY_SHORT_ID="${REALITY_SHORT_ID}"
 REALITY_PRIVATE_KEY="${REALITY_PRIVATE_KEY}"
 REALITY_PUBLIC_KEY="${REALITY_PUBLIC_KEY}"
+NAIVE_SUBDOMAIN="${NAIVE_SUBDOMAIN}"
+NAIVE_PORT="${NAIVE_PORT}"
+NAIVE_USERNAME="${NAIVE_USERNAME}"
+NAIVE_PASSWORD="${NAIVE_PASSWORD}"
 VPS_COUNTRY_CODE="${VPS_COUNTRY_CODE}"
 EOF
   chmod 600 "$CONFIG_FILE"
@@ -389,6 +401,32 @@ validate_inputs() {
     die "REALITY_DEST is set but REALITY_SUBDOMAIN is blank -- set both to enable Reality, or clear both to disable it."
   fi
 
+  # NaiveProxy is entirely optional -- a blank NAIVE_SUBDOMAIN disables it.
+  if [[ -n "$NAIVE_SUBDOMAIN" ]]; then
+    [[ "$NAIVE_SUBDOMAIN" =~ ^[A-Za-z0-9-]+$ ]] ||
+      die "Invalid NaiveProxy subdomain."
+
+    [[ "$NAIVE_SUBDOMAIN" != "$PANEL_SUBDOMAIN" ]] ||
+      die "NaiveProxy subdomain must be different from the panel subdomain."
+
+    [[ "$NAIVE_SUBDOMAIN" != "$VLESS_SUBDOMAIN" ]] ||
+      die "NaiveProxy subdomain must be different from the VLESS subdomain."
+
+    [[ -z "$REALITY_SUBDOMAIN" || "$NAIVE_SUBDOMAIN" != "$REALITY_SUBDOMAIN" ]] ||
+      die "NaiveProxy subdomain must be different from the Reality subdomain."
+
+    validate_port "NaiveProxy port" "$NAIVE_PORT"
+
+    local naive_other_port
+    for naive_other_port in "$SUB_PORT" "$WS_PORT" "$GRPC_PORT" "$XHTTP_PORT" "$PANEL_PORT" "${REALITY_PORT:-}"; do
+      [[ -z "$naive_other_port" || "$NAIVE_PORT" != "$naive_other_port" ]] ||
+        die "NaiveProxy port must be different from every other internal port."
+    done
+
+    [[ "$NAIVE_PORT" != "443" ]] ||
+      die "NaiveProxy port cannot be 443 (reserved for the public HTTPS listener)."
+  fi
+
   normalize_ws_path
   normalize_xhttp_path
   normalize_sub_path
@@ -530,6 +568,30 @@ collect_input() {
     REALITY_SHORT_ID=""
   fi
 
+  echo
+  echo "Optional: NaiveProxy (Caddy forward proxy) is another direct connection"
+  echo "(no CDN -- use a DNS-only/grey-cloud record), sharing port 443 alongside"
+  echo "the CDN and Reality inbounds above via SNI-based routing. Leave the"
+  echo "subdomain blank to skip it."
+  echo
+  prompt_optional NAIVE_SUBDOMAIN "NaiveProxy subdomain (DNS-only, e.g. naive)" "$NAIVE_SUBDOMAIN"
+
+  if [[ -n "$NAIVE_SUBDOMAIN" ]]; then
+    NAIVE_PORT="${NAIVE_PORT:-$(random_free_port "443" "$SUB_PORT" "$WS_PORT" "$GRPC_PORT" "$XHTTP_PORT" "$PANEL_PORT" "${REALITY_PORT:-}")}"
+    validate_port "NaiveProxy port" "$NAIVE_PORT"
+
+    if port_is_listening "$NAIVE_PORT"; then
+      echo "WARNING: port ${NAIVE_PORT} is already in use by another process on this host." >&2
+    fi
+
+    [[ -n "$NAIVE_USERNAME" ]] || NAIVE_USERNAME="user_$(openssl rand -hex 4)"
+    [[ -n "$NAIVE_PASSWORD" ]] || NAIVE_PASSWORD="$(openssl rand -hex 16)"
+  else
+    NAIVE_PORT=""
+    NAIVE_USERNAME=""
+    NAIVE_PASSWORD=""
+  fi
+
   validate_inputs
 }
 
@@ -581,9 +643,18 @@ confirm_configuration() {
     echo
   fi
 
+  if [[ -n "$NAIVE_SUBDOMAIN" ]]; then
+    echo "NaiveProxy (direct connection, no CDN):"
+    echo "  domain: ${NAIVE_SUBDOMAIN}.${BASE_DOMAIN} (DNS-only/grey-cloud -- do NOT enable the Cloudflare proxy for this record)"
+    echo "  public/client port: 443"
+    echo "  internal Caddy port: ${NAIVE_PORT}"
+    echo "  username: ${NAIVE_USERNAME}"
+    echo
+  fi
+
   echo "Firewall:"
   echo "  allowed: 443/tcp from anywhere (shared by CDN, Reality and NaiveProxy via SNI-based routing); SSH is left untouched by this script"
-  echo "  denied: public 80/tcp, ${PANEL_PORT}/tcp, ${SUB_PORT}/tcp, ${WS_PORT}/tcp, ${GRPC_PORT}/tcp, ${XHTTP_PORT}/tcp${REALITY_PORT:+, ${REALITY_PORT}/tcp}"
+  echo "  denied: public 80/tcp, ${PANEL_PORT}/tcp, ${SUB_PORT}/tcp, ${WS_PORT}/tcp, ${GRPC_PORT}/tcp, ${XHTTP_PORT}/tcp${REALITY_PORT:+, ${REALITY_PORT}/tcp}${NAIVE_PORT:+, ${NAIVE_PORT}/tcp}"
   echo
 
   read -r -p "Continue? [y/N]: " answer
@@ -671,7 +742,96 @@ install_packages() {
     curl \
     ca-certificates \
     openssl \
-    python3
+    python3 \
+    tar \
+    xz-utils
+}
+
+NAIVE_BIN="/usr/bin/caddy"
+NAIVE_VERSION_FILE="/usr/local/naiveproxy/.installed-version"
+NAIVE_RELEASES_API="https://api.github.com/repos/klzgrad/naiveproxy/releases/latest"
+
+naive_map_arch() {
+  case "$1" in
+    x86_64|amd64) echo "x64" ;;
+    aarch64|arm64) echo "arm64" ;;
+    armv7l|armv6l|arm) echo "arm" ;;
+    i386|i686|x86) echo "x86" ;;
+    loongarch64) echo "loong64" ;;
+    mips64el) echo "mips64el" ;;
+    mipsel) echo "mipsel" ;;
+    riscv64) echo "riscv64" ;;
+    *) die "Unsupported architecture for NaiveProxy: $1" ;;
+  esac
+}
+
+# Downloads and installs the latest klzgrad/naiveproxy release's `caddy`
+# binary (a Caddy build bundling the naive fork of forwardproxy). Skipped
+# entirely when NAIVE_SUBDOMAIN is empty. Idempotent: tracks the installed
+# release tag in NAIVE_VERSION_FILE and skips re-downloading when already
+# current.
+install_naiveproxy() {
+  [[ -n "$NAIVE_SUBDOMAIN" ]] || {
+    echo "NAIVE_SUBDOMAIN not set, skipping NaiveProxy install." >&2
+    return
+  }
+
+  echo "Installing NaiveProxy (Caddy + forwardproxy)..." >&2
+
+  local arch tag asset_name download_url release_json
+  arch="$(naive_map_arch "$(uname -m)")"
+
+  release_json="$(curl -fsSL "$NAIVE_RELEASES_API")" ||
+    die "Failed to fetch the latest NaiveProxy release metadata."
+
+  tag="$(python3 -c "import json,sys; print(json.loads(sys.argv[1])['tag_name'])" "$release_json")" ||
+    die "Failed to parse the NaiveProxy release tag. Response: ${release_json}"
+
+  if [[ -f "$NAIVE_VERSION_FILE" ]] && [[ "$(cat "$NAIVE_VERSION_FILE")" == "$tag" ]] && [[ -x "$NAIVE_BIN" ]]; then
+    echo "NaiveProxy ${tag} already installed, skipping." >&2
+    return
+  fi
+
+  asset_name="naiveproxy-${tag}-linux-${arch}.tar.xz"
+  download_url="$(python3 -c "
+import json,sys
+data = json.loads(sys.argv[1])
+name = sys.argv[2]
+for asset in data.get('assets', []):
+    if asset.get('name') == name:
+        print(asset['browser_download_url'])
+        break
+" "$release_json" "$asset_name")"
+
+  [[ -n "$download_url" ]] ||
+    die "Could not find NaiveProxy release asset '${asset_name}' (release ${tag}) for this architecture."
+
+  local tmp_dir tmp_archive caddy_binary
+  tmp_dir="$(mktemp -d)"
+  tmp_archive="${tmp_dir}/${asset_name}"
+
+  curl -fsSL -o "$tmp_archive" "$download_url" ||
+    { rm -rf "$tmp_dir"; die "Failed to download NaiveProxy release archive from ${download_url}."; }
+
+  tar -xJf "$tmp_archive" -C "$tmp_dir" ||
+    { rm -rf "$tmp_dir"; die "Failed to extract NaiveProxy release archive."; }
+
+  caddy_binary="$(find "$tmp_dir" -type f -name caddy | head -1)"
+  if [[ -z "$caddy_binary" ]]; then
+    rm -rf "$tmp_dir"
+    die "NaiveProxy archive did not contain a 'caddy' binary."
+  fi
+
+  install -m 755 "$caddy_binary" "$NAIVE_BIN"
+
+  install -d -m 755 "$(dirname -- "$NAIVE_VERSION_FILE")"
+  printf '%s\n' "$tag" > "$NAIVE_VERSION_FILE"
+
+  # Removes the downloaded archive and extracted files -- only the installed
+  # binary at NAIVE_BIN and the version marker are kept.
+  rm -rf "$tmp_dir"
+
+  echo "NaiveProxy ${tag} installed to ${NAIVE_BIN}." >&2
 }
 
 write_cloudflare_credentials() {
@@ -1099,6 +1259,7 @@ configure_ufw() {
   local prev_grpc_port=""
   local prev_xhttp_port=""
   local prev_reality_port=""
+  local prev_naive_port=""
 
   if [[ -f "$STATE_FILE" ]]; then
     # shellcheck disable=SC1090
@@ -1109,17 +1270,19 @@ configure_ufw() {
     prev_grpc_port="${STATE_GRPC_PORT:-}"
     prev_xhttp_port="${STATE_XHTTP_PORT:-}"
     prev_reality_port="${STATE_REALITY_PORT:-}"
+    prev_naive_port="${STATE_NAIVE_PORT:-}"
   fi
 
   # Remove stale deny rules left over from a previous run with different ports.
-  for stale_port in "$prev_panel_port" "$prev_sub_port" "$prev_ws_port" "$prev_grpc_port" "$prev_xhttp_port" "$prev_reality_port"; do
+  for stale_port in "$prev_panel_port" "$prev_sub_port" "$prev_ws_port" "$prev_grpc_port" "$prev_xhttp_port" "$prev_reality_port" "$prev_naive_port"; do
     if [[ -n "$stale_port" ]] &&
        [[ "$stale_port" != "$PANEL_PORT" ]] &&
        [[ "$stale_port" != "$SUB_PORT" ]] &&
        [[ "$stale_port" != "$WS_PORT" ]] &&
        [[ "$stale_port" != "$GRPC_PORT" ]] &&
        [[ "$stale_port" != "$XHTTP_PORT" ]] &&
-       [[ "$stale_port" != "${REALITY_PORT:-}" ]]; then
+       [[ "$stale_port" != "${REALITY_PORT:-}" ]] &&
+       [[ "$stale_port" != "${NAIVE_PORT:-}" ]]; then
       ufw delete deny "${stale_port}/tcp" || true
     fi
   done
@@ -1142,6 +1305,7 @@ configure_ufw() {
   ufw deny "${GRPC_PORT}/tcp" || true
   ufw deny "${XHTTP_PORT}/tcp" || true
   [[ -z "${REALITY_PORT:-}" ]] || ufw deny "${REALITY_PORT}/tcp" || true
+  [[ -z "${NAIVE_PORT:-}" ]] || ufw deny "${NAIVE_PORT}/tcp" || true
 
   ufw --force enable
   ufw reload
@@ -1153,6 +1317,7 @@ STATE_WS_PORT=${WS_PORT}
 STATE_GRPC_PORT=${GRPC_PORT}
 STATE_XHTTP_PORT=${XHTTP_PORT}
 STATE_REALITY_PORT=${REALITY_PORT:-}
+STATE_NAIVE_PORT=${NAIVE_PORT:-}
 EOF
   chmod 600 "$STATE_FILE"
 }
@@ -1206,9 +1371,19 @@ print_summary() {
     echo
   fi
 
+  if [[ -n "$NAIVE_SUBDOMAIN" ]]; then
+    echo "NaiveProxy (direct connection, no CDN):"
+    echo "  domain: ${NAIVE_SUBDOMAIN}.${BASE_DOMAIN}"
+    echo "  public/client port: 443"
+    echo "  internal Caddy port: ${NAIVE_PORT}"
+    echo "  username: ${NAIVE_USERNAME}"
+    echo "  password: ${NAIVE_PASSWORD}"
+    echo
+  fi
+
   echo "UFW:"
   echo "  allowed: 443/tcp from anywhere (shared by CDN, Reality and NaiveProxy via SNI-based routing); SSH is left untouched by this script"
-  echo "  denied: public 80/tcp, ${PANEL_PORT}/tcp, ${SUB_PORT}/tcp, ${WS_PORT}/tcp, ${GRPC_PORT}/tcp, ${XHTTP_PORT}/tcp${REALITY_PORT:+, ${REALITY_PORT}/tcp}"
+  echo "  denied: public 80/tcp, ${PANEL_PORT}/tcp, ${SUB_PORT}/tcp, ${WS_PORT}/tcp, ${GRPC_PORT}/tcp, ${XHTTP_PORT}/tcp${REALITY_PORT:+, ${REALITY_PORT}/tcp}${NAIVE_PORT:+, ${NAIVE_PORT}/tcp}"
   echo
   echo "Files:"
   echo "  Nginx site: ${NGINX_SITE}"
@@ -1505,7 +1680,7 @@ uninstall_all() {
     fi
     ufw delete deny 443/tcp >/dev/null 2>&1 || true
     ufw delete deny 80/tcp >/dev/null 2>&1 || true
-    for p in "${PANEL_PORT:-}" "${SUB_PORT:-}" "${WS_PORT:-}" "${GRPC_PORT:-}" "${XHTTP_PORT:-}" "${REALITY_PORT:-}"; do
+    for p in "${PANEL_PORT:-}" "${SUB_PORT:-}" "${WS_PORT:-}" "${GRPC_PORT:-}" "${XHTTP_PORT:-}" "${REALITY_PORT:-}" "${NAIVE_PORT:-}"; do
       [[ -n "$p" ]] && ufw delete deny "${p}/tcp" >/dev/null 2>&1 || true
     done
     ufw reload >/dev/null 2>&1 || true
@@ -1557,6 +1732,7 @@ main() {
   INBOUND_REMARK_REALITY="${VPS_FLAG} Reality"
 
   install_packages
+  install_naiveproxy
   anonymize_vps
   install_3xui_and_inbounds
   write_cloudflare_credentials
