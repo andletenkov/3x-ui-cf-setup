@@ -302,6 +302,13 @@ except Exception:
 for ib in obj:
     if ib.get('tag') == tag:
         sys.exit(0)
+    # Also match by port when the tag was renamed or migrated
+    try:
+        port = int(tag.split('-')[1])
+        if ib.get('port') == port:
+            sys.exit(0)
+    except (IndexError, ValueError):
+        pass
 sys.exit(1)
 " "$resp" "$tag"
 }
