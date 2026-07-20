@@ -897,7 +897,11 @@ write_caddyfile() {
 
   cat > "$tmp_caddyfile" <<EOF
 {
+    auto_https off
     order forward_proxy before file_server
+    servers {
+        protocols h1 h2
+    }
     log {
         exclude http.log.error
     }
