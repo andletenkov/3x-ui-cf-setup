@@ -1460,6 +1460,13 @@ server {
 ${decoy_server_block}
 EOF
 
+  install -d -m 755 "$(dirname -- "$NGINX_SITE")" "$(dirname -- "$NGINX_SITE_ENABLED")"
+
+  # Ensure nginx.conf includes sites-enabled (nginx.org packages only ship conf.d)
+  if ! grep -q 'sites-enabled' "$NGINX_MAIN_CONF"; then
+    sed -i '/include \/etc\/nginx\/conf\.d/a\    include /etc/nginx/sites-enabled/*;' "$NGINX_MAIN_CONF"
+  fi
+
   if [[ -e "$NGINX_SITE" ]]; then
     backup="${NGINX_SITE}.backup-${TIMESTAMP}"
     cp -a "$NGINX_SITE" "$backup"
