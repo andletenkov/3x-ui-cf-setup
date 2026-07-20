@@ -376,7 +376,9 @@ ensure_vless_encryption_keys() {
   VLESS_ENCRYPTION_SERVER_KEY="$(python3 -c "
 import json,sys
 try:
-    print(json.loads(sys.argv[1])['obj']['serverKey'])
+    obj = json.loads(sys.argv[1])['obj']
+    # API returns 'serverKey'+'clientKey' or 'seed'+'client'
+    print(obj.get('serverKey') or obj['seed'])
 except Exception:
     sys.exit(1)
 " "$resp")" || die "Failed to generate VLESS Encryption keys (is 3x-ui new enough to support getNewmlkem768?). Response: ${resp}"
@@ -384,7 +386,9 @@ except Exception:
   VLESS_ENCRYPTION_CLIENT_KEY="$(python3 -c "
 import json,sys
 try:
-    print(json.loads(sys.argv[1])['obj']['clientKey'])
+    obj = json.loads(sys.argv[1])['obj']
+    # API returns 'serverKey'+'clientKey' or 'seed'+'client'
+    print(obj.get('clientKey') or obj['client'])
 except Exception:
     sys.exit(1)
 " "$resp")" || die "Failed to generate VLESS Encryption keys. Response: ${resp}"
