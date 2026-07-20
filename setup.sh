@@ -1858,7 +1858,7 @@ print_client_links() {
   echo "vless://${CLIENT_UUID}@${VLESS_SUBDOMAIN}.${BASE_DOMAIN}:443?type=xhttp&security=tls&encryption=${VLESS_ENCRYPTION_CLIENT_KEY}&flow=xtls-rprx-vision&path=$(printf '%s' "$XHTTP_PATH" | sed 's#/#%2F#g')&mode=packet-up&host=${VLESS_SUBDOMAIN}.${BASE_DOMAIN}#${INBOUND_REMARK_XHTTP}"
 
   if [[ -n "$REALITY_SUBDOMAIN" ]]; then
-    echo "vless://${CLIENT_UUID}@${REALITY_SUBDOMAIN}.${BASE_DOMAIN}:443?type=tcp&security=reality&pbk=${REALITY_PUBLIC_KEY}&fp=chrome&sni=${REALITY_DEST}&sid=${REALITY_SHORT_ID}&flow=xtls-rprx-vision#${INBOUND_REMARK_REALITY}"
+    echo "vless://${CLIENT_UUID}@${REALITY_SUBDOMAIN}.${BASE_DOMAIN}:443?type=tcp&security=reality&pbk=${REALITY_PUBLIC_KEY}&fp=chrome&sni=${REALITY_DEST}&sid=${REALITY_SHORT_ID}&flow=xtls-rprx-vision&encryption=none#${INBOUND_REMARK_REALITY}"
   fi
 
   if [[ -n "$NAIVE_SUBDOMAIN" ]]; then
