@@ -795,23 +795,8 @@ install_packages() {
 
 NAIVE_BIN="/usr/bin/caddy"
 NAIVE_VERSION_FILE="/usr/local/naiveproxy/.installed-version"
-NAIVE_RELEASES_API="https://api.github.com/repos/klzgrad/naiveproxy/releases/latest"
 
-naive_map_arch() {
-  case "$1" in
-    x86_64|amd64) echo "x64" ;;
-    aarch64|arm64) echo "arm64" ;;
-    armv7l|armv6l|arm) echo "arm" ;;
-    i386|i686|x86) echo "x86" ;;
-    loongarch64) echo "loong64" ;;
-    mips64el) echo "mips64el" ;;
-    mipsel) echo "mipsel" ;;
-    riscv64) echo "riscv64" ;;
-    *) die "Unsupported architecture for NaiveProxy: $1" ;;
-  esac
-}
-
-# Downloads and installs the latest klzgrad/naiveproxy release's `caddy`
+# Downloads and installs the latest klzgrad/forwardproxy release's `caddy`
 # binary (a Caddy build bundling the naive fork of forwardproxy). Skipped
 # entirely when NAIVE_SUBDOMAIN is empty. Idempotent: tracks the installed
 # release tag in NAIVE_VERSION_FILE and skips re-downloading when already
@@ -824,30 +809,25 @@ install_naiveproxy() {
 
   echo "Installing NaiveProxy (Caddy + forwardproxy)..." >&2
 
-  local arch tag asset_name download_url
-  arch="$(naive_map_arch "$(uname -m)")"
+  local tag download_url
 
   tag="$(
-    curl -sI https://github.com/klzgrad/naiveproxy/releases/latest \
+    curl -sI https://github.com/klzgrad/forwardproxy/releases/latest \
     | awk -F'/tag/' 'tolower($1) ~ /^location:/ {print $2}' \
     | tr -d '\r'
   )" ||
-    die "Failed to parse the NaiveProxy latest release tag"
+    die "Failed to parse the NaiveProxy (forwardproxy) latest release tag"
 
   if [[ -f "$NAIVE_VERSION_FILE" ]] && [[ "$(cat "$NAIVE_VERSION_FILE")" == "$tag" ]] && [[ -x "$NAIVE_BIN" ]]; then
     echo "NaiveProxy ${tag} already installed, skipping." >&2
     return
   fi
 
-  asset_name="naiveproxy-${tag}-linux-${arch}.tar.xz"
-  download_url="https://github.com/klzgrad/naiveproxy/releases/download/${tag}/${asset_name}"
-
-  [[ -n "$download_url" ]] ||
-    die "Could not find NaiveProxy release asset '${asset_name}' (release ${tag}) for this architecture."
+  download_url="https://github.com/klzgrad/forwardproxy/releases/download/${tag}/caddy-forwardproxy-naive.tar.xz"
 
   local tmp_dir tmp_archive caddy_binary
   tmp_dir="$(mktemp -d)"
-  tmp_archive="${tmp_dir}/${asset_name}"
+  tmp_archive="${tmp_dir}/caddy-forwardproxy-naive.tar.xz"
 
   curl -fsSL -o "$tmp_archive" "$download_url" ||
     { rm -rf "$tmp_dir"; die "Failed to download NaiveProxy release archive from ${download_url}."; }
@@ -855,7 +835,7 @@ install_naiveproxy() {
   tar -xJf "$tmp_archive" -C "$tmp_dir" ||
     { rm -rf "$tmp_dir"; die "Failed to extract NaiveProxy release archive."; }
 
-  caddy_binary="$(find "$tmp_dir" -type f -name naive | head -1)"
+  caddy_binary="$(find "$tmp_dir" -type f -name caddy | head -1)"
   if [[ -z "$caddy_binary" ]]; then
     rm -rf "$tmp_dir"
     die "NaiveProxy archive did not contain a 'caddy' binary."
@@ -941,11 +921,8 @@ EOF
   chmod 644 "$CADDYFILE"
 
   if [[ -x "$NAIVE_BIN" ]]; then
-    # NaiveProxy's Caddy fork may not support 'validate'; skip if unsupported.
-    if "$NAIVE_BIN" help validate &>/dev/null; then
-      "$NAIVE_BIN" validate --config "$CADDYFILE" ||
-        die "Generated Caddyfile failed 'caddy validate'; check ${CADDYFILE}."
-    fi
+    "$NAIVE_BIN" validate --config "$CADDYFILE" ||
+      die "Generated Caddyfile failed 'caddy validate'; check ${CADDYFILE}."
   fi
 }
 
