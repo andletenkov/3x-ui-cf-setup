@@ -636,9 +636,15 @@ ensure_reality_inbound() {
     return
   fi
 
+  # NOTE: externalProxy is deliberately never set here. It tells 3x-ui's
+  # subscription/link generator "this inbound sits behind an external
+  # TLS-terminating proxy", which makes it emit security=tls instead of
+  # security=reality in generated client links -- breaking Reality entirely,
+  # since Reality is a direct connection that does its own TLS impersonation
+  # and has no CDN/reverse-proxy TLS termination in front of it.
   local stream_settings
   export REALITY_DEST_ARG="$REALITY_DEST" REALITY_SHORT_ID_ARG="$REALITY_SHORT_ID" \
-    REALITY_PRIVATE_KEY_ARG="$REALITY_PRIVATE_KEY" EXT_DOMAIN="${REALITY_DOMAIN:-}"
+    REALITY_PRIVATE_KEY_ARG="$REALITY_PRIVATE_KEY"
   stream_settings="$(python3 << 'REALITYEOF'
 import json,os
 settings = {
@@ -653,13 +659,6 @@ settings = {
         'shortIds': [os.environ['REALITY_SHORT_ID_ARG']],
     },
 }
-if os.environ.get('EXT_DOMAIN'):
-    settings['externalProxy'] = [{
-        'forceTls': 'tls',
-        'dest': os.environ['EXT_DOMAIN'],
-        'port': 443,
-        'remark': '',
-    }]
 print(json.dumps(settings))
 REALITYEOF
   )"
