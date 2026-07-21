@@ -584,6 +584,8 @@ nginx_config_env() {
   CERT_DIR="/tmp/fake-cert"
   NGINX_SITE="${BATS_TEST_TMPDIR}/3xui-proxy"
   NGINX_SITE_ENABLED="${BATS_TEST_TMPDIR}/3xui-proxy-enabled"
+  NGINX_DEFAULT_SITE="${BATS_TEST_TMPDIR}/default"
+  NGINX_DEFAULT_SITE_BACKUP="${BATS_TEST_TMPDIR}/default.backup"
   TIMESTAMP="20260101-000000"
 }
 
@@ -601,6 +603,18 @@ nginx_config_env() {
   grep -q "location /api.v1.SyncService" "$NGINX_SITE"
   grep -q "server_name admin.example.com;" "$NGINX_SITE"
   grep -q "server_name vpn.example.com;" "$NGINX_SITE"
+}
+
+@test "write_nginx_config preserves the default site for uninstall" {
+  nginx_config_env
+  ln -s /etc/nginx/sites-available/default "$NGINX_DEFAULT_SITE"
+
+  run write_nginx_config
+  [ "$status" -eq 0 ]
+
+  [ ! -e "$NGINX_DEFAULT_SITE" ]
+  [ -L "$NGINX_DEFAULT_SITE_BACKUP" ]
+  [ "$(readlink "$NGINX_DEFAULT_SITE_BACKUP")" = "/etc/nginx/sites-available/default" ]
 }
 
 @test "write_nginx_config matches XHTTP packet-up session subpaths" {
@@ -2297,6 +2311,8 @@ run_stream_write_nginx_config() {
     CERT_DIR="/tmp/fake-cert"
     NGINX_SITE="'"$NGINX_SITE"'"
     NGINX_SITE_ENABLED="'"$NGINX_SITE_ENABLED"'"
+    NGINX_DEFAULT_SITE="'"$NGINX_DEFAULT_SITE"'"
+    NGINX_DEFAULT_SITE_BACKUP="'"$NGINX_DEFAULT_SITE_BACKUP"'"
     TIMESTAMP="20260101-000000"
     REALITY_SUBDOMAIN="reality"
     REALITY_DEST="github.com"

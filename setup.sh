@@ -76,6 +76,9 @@ COOKIE_JAR=""
 
 NGINX_SITE="/etc/nginx/sites-available/3xui-proxy"
 NGINX_SITE_ENABLED="/etc/nginx/sites-enabled/3xui-proxy"
+# Preserves the distribution's default site while this script owns port 443.
+NGINX_DEFAULT_SITE="/etc/nginx/sites-enabled/default"
+NGINX_DEFAULT_SITE_BACKUP="/etc/nginx/.3xui-proxy-default-site.backup"
 FALLBACK_HTML_DEST="/etc/nginx/3xui-proxy-fallback.html"
 
 CF_REAL_IP_CONF="/etc/nginx/conf.d/cloudflare-real-ip.conf"
@@ -1482,15 +1485,20 @@ EOF
     cp -a "$NGINX_SITE" "$backup"
   fi
 
-  if [[ -e /etc/nginx/sites-enabled/default ]]; then
+  if [[ -e "$NGINX_DEFAULT_SITE" || -L "$NGINX_DEFAULT_SITE" ]]; then
     default_site_was_enabled=true
+    # Keep the original target/content across reruns; do not overwrite the
+    # backup once this script has claimed the default listener.
+    if [[ ! -e "$NGINX_DEFAULT_SITE_BACKUP" && ! -L "$NGINX_DEFAULT_SITE_BACKUP" ]]; then
+      cp -a "$NGINX_DEFAULT_SITE" "$NGINX_DEFAULT_SITE_BACKUP"
+    fi
   fi
 
   mv "$tmp_nginx" "$NGINX_SITE"
   chmod 644 "$NGINX_SITE"
 
   ln -sfn "$NGINX_SITE" "$NGINX_SITE_ENABLED"
-  rm -f /etc/nginx/sites-enabled/default
+  rm -f "$NGINX_DEFAULT_SITE"
 
   if [[ "$stream_mode" == true ]]; then
     ensure_nginx_stream_context
@@ -1527,10 +1535,9 @@ EOF
       rm -f "$NGINX_STREAM_CONF"
     fi
 
-    if [[ "$default_site_was_enabled" == true ]]; then
-      ln -sfn \
-        /etc/nginx/sites-available/default \
-        /etc/nginx/sites-enabled/default
+    if [[ "$default_site_was_enabled" == true ]] &&
+       [[ -e "$NGINX_DEFAULT_SITE_BACKUP" || -L "$NGINX_DEFAULT_SITE_BACKUP" ]]; then
+      mv "$NGINX_DEFAULT_SITE_BACKUP" "$NGINX_DEFAULT_SITE"
     fi
 
     nginx -t || true
@@ -1733,17 +1740,9 @@ detect_country_flag() {
   if [[ -n "$VPS_COUNTRY_CODE" ]]; then
     country_code="${VPS_COUNTRY_CODE^^}"
     [[ "$country_code" =~ ^[A-Z]{2}$ ]] ||
-      die "VPS_COUNTRY_CODE must be a two-letter ISO country code (for example, EE)."
+      die "VPS_COUNTRY_CODE must be a two-letter ISO country code (for example, FR)."
   else
     country_code="$(curl -fsSL --max-time 5 https://ipapi.co/country/ 2>/dev/null || true)"
-
-    # Fallback APIs if primary fails or returns non-country response
-    if [[ ! "$country_code" =~ ^[A-Z]{2}$ ]]; then
-      country_code="$(curl -fsSL --max-time 5 https://ifconfig.co/country-iso 2>/dev/null || true)"
-    fi
-    if [[ ! "$country_code" =~ ^[A-Z]{2}$ ]]; then
-      country_code="$(curl -fsSL --max-time 5 http://ip-api.com/line/?fields=countryCode 2>/dev/null || true)"
-    fi
   fi
 
   if [[ "$country_code" =~ ^[A-Z]{2}$ ]]; then
@@ -2858,6 +2857,13 @@ uninstall_all() {
   echo
   echo "--- Nginx ---"
   rm -f "$NGINX_SITE_ENABLED" "$NGINX_SITE" "$CF_REAL_IP_CONF" "$FALLBACK_HTML_DEST"
+  if [[ -e "$NGINX_DEFAULT_SITE_BACKUP" || -L "$NGINX_DEFAULT_SITE_BACKUP" ]]; then
+    if [[ -e "$NGINX_DEFAULT_SITE" || -L "$NGINX_DEFAULT_SITE" ]]; then
+      echo "Keeping existing ${NGINX_DEFAULT_SITE}; preserved default site remains at ${NGINX_DEFAULT_SITE_BACKUP}." >&2
+    else
+      mv "$NGINX_DEFAULT_SITE_BACKUP" "$NGINX_DEFAULT_SITE"
+    fi
+  fi
   rm -f "${NGINX_STREAM_CONF:-/etc/nginx/stream.d/3xui-proxy-sni-guard.conf}"
   unensure_nginx_stream_context
   if command -v nginx >/dev/null 2>&1; then
@@ -2972,7 +2978,7 @@ main() {
   INBOUND_REMARK_WS="${VPS_FLAG} WebSocket-CDN"
   INBOUND_REMARK_GRPC="${VPS_FLAG} gRPC-CDN"
   INBOUND_REMARK_XHTTP="${VPS_FLAG} XHTTP-CDN"
-  INBOUND_REMARK_REALITY="${VPS_FLAG} Reality"
+  INBOUND_REMARK_REALITY="${VPS_FLAG} TCP-Reality"
 
   install_packages
   install_naiveproxy
