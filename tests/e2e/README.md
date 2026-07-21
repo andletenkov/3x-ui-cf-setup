@@ -63,7 +63,7 @@ tests/e2e/run.sh 01-xui-reality.sh  # run just one
 Each time we discover a new class of bug in production, the fix belongs in
 two places:
 
-1. The actual script fix (`setup.sh` / `setup-3x-ui.sh`).
+1. The actual script fix (`setup.sh`).
 2. A new assertion in the relevant scenario (or a new scenario, if it's a
    new subsystem) asserting on the *real, observed* behavior that was wrong
    — not a re-assertion of our previous (wrong) assumption. If the bug came
@@ -73,9 +73,10 @@ two places:
 
 ## Scenarios
 
-- `01-xui-reality.sh` — real 3x-ui panel + `setup-3x-ui.sh`: inbound
-  creation, VLESS Encryption keys, Reality keys/Host override, subscription
-  output.
+- `01-xui-reality.sh` — real 3x-ui panel + `setup.sh`'s 3x-ui install/
+  inbound functions: inbound creation, VLESS Encryption keys, Reality keys/
+  Host override, subscription output.
+
 - `02-nginx-caddy.sh` — real nginx (nginx.org repo) + real Caddy
   (`klzgrad/forwardproxy`) + `setup.sh`'s config-writing functions: config
   validation, service startup, port binding, SNI-based routing.

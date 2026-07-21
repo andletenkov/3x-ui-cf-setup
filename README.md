@@ -56,11 +56,10 @@ It only appears once a direct-connection feature needs to share port 443.
 
 | Script | Role |
 |---|---|
-| `setup.sh` | Main entry point. Installs, updates, configures, verifies, and uninstalls the complete stack, including NaiveProxy and the Nginx stream SNI Guard. |
-| `setup-3x-ui.sh` | Internal helper that installs/reuses 3x-ui and creates WS, gRPC, XHTTP, Reality, subscription, and Xray routing configuration. |
+| `setup.sh` | Main entry point. Installs, updates, configures, verifies, and uninstalls the complete stack: Nginx, NaiveProxy, the Nginx stream SNI Guard, and 3x-ui install/inbound/subscription/Xray-routing configuration (all in one script -- no subprocess boundary). |
 | `harden-host.sh` | Optional host hardening for clock sync, DNS-over-TLS, sysctl, ICMP, TTL, banners, and BBR. Invoked by `setup.sh`. |
 
-Use `setup.sh` for normal operation. The helper scripts can be run directly only for their respective `--uninstall` actions.
+Use `setup.sh` for normal operation. `harden-host.sh` can be run directly only for its `--uninstall` action.
 
 ## Prerequisites
 
@@ -82,7 +81,7 @@ Use `setup.sh` for normal operation. The helper scripts can be run directly only
 ```bash
 git clone https://github.com/andletenkov/3x-ui-cf-setup.git
 cd 3x-ui-cf-setup
-chmod +x setup.sh setup-3x-ui.sh harden-host.sh
+chmod +x setup.sh harden-host.sh
 sudo ./setup.sh
 ```
 

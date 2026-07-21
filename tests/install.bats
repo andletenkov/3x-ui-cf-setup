@@ -1178,7 +1178,7 @@ print_summary_env() {
 # ---------------------------------------------------------------------------
 
 @test "install-3xui explicitly enables generated VLESS clients" {
-  local installer="${BATS_TEST_DIRNAME}/../setup-3x-ui.sh"
+  local installer="${BATS_TEST_DIRNAME}/../setup.sh"
 
   run grep -A25 "'clients': \[{" "$installer"
   [ "$status" -eq 0 ]
@@ -1186,7 +1186,7 @@ print_summary_env() {
 }
 
 @test "install-3xui fetches full inbound detail before syncing an existing remark" {
-  local installer="${BATS_TEST_DIRNAME}/../setup-3x-ui.sh"
+  local installer="${BATS_TEST_DIRNAME}/../setup.sh"
 
   run grep -A55 '^xui_sync_inbound_remark()' "$installer"
   [ "$status" -eq 0 ]
@@ -1195,14 +1195,15 @@ print_summary_env() {
 }
 
 # ---------------------------------------------------------------------------
-# VLESS Encryption (ML-KEM-768) -- WS/gRPC/XHTTP only, never Reality.
-# setup-3x-ui.sh always runs main() unconditionally (no BASH_SOURCE guard),
-# so its functions can't be sourced/exercised directly the way setup.sh's
-# can; these assertions are static, matching the existing convention above.
+# VLESS Encryption (ML-KEM-768) -- WS/gRPC/XHTTP only, never Reality. These
+# functions ARE sourceable/callable now (merged into setup.sh, which has a
+# BASH_SOURCE guard) -- kept as static source-text assertions here for
+# minimal diff; see the "real 3x-ui" e2e tier (tests/e2e) for functional
+# coverage against an actual running panel.
 # ---------------------------------------------------------------------------
 
 @test "ensure_vless_encryption_keys calls getNewmlkem768 and reuses a passed-in keypair" {
-  local installer="${BATS_TEST_DIRNAME}/../setup-3x-ui.sh"
+  local installer="${BATS_TEST_DIRNAME}/../setup.sh"
 
   run grep -A20 '^ensure_vless_encryption_keys()' "$installer"
   [ "$status" -eq 0 ]
@@ -1211,7 +1212,7 @@ print_summary_env() {
 }
 
 @test "xui_add_inbound includes decryption and an optional client flow" {
-  local installer="${BATS_TEST_DIRNAME}/../setup-3x-ui.sh"
+  local installer="${BATS_TEST_DIRNAME}/../setup.sh"
 
   run grep -A45 '^xui_add_inbound()' "$installer"
   [ "$status" -eq 0 ]
@@ -1220,7 +1221,7 @@ print_summary_env() {
 }
 
 @test "ensure_ws_inbound and ensure_grpc_inbound pass the VLESS Encryption server key but no flow" {
-  local installer="${BATS_TEST_DIRNAME}/../setup-3x-ui.sh"
+  local installer="${BATS_TEST_DIRNAME}/../setup.sh"
 
   run grep 'xui_add_inbound "\$WS_PORT"' "$installer"
   [ "$status" -eq 0 ]
@@ -1234,7 +1235,7 @@ print_summary_env() {
 }
 
 @test "ensure_xhttp_inbound passes the VLESS Encryption server key and xtls-rprx-vision flow" {
-  local installer="${BATS_TEST_DIRNAME}/../setup-3x-ui.sh"
+  local installer="${BATS_TEST_DIRNAME}/../setup.sh"
 
   run grep 'xui_add_inbound "\$XHTTP_PORT"' "$installer"
   [ "$status" -eq 0 ]
@@ -1242,10 +1243,10 @@ print_summary_env() {
   [[ "$output" == *"xtls-rprx-vision"* ]]
 }
 
-@test "main generates VLESS Encryption keys before creating any inbound" {
-  local installer="${BATS_TEST_DIRNAME}/../setup-3x-ui.sh"
+@test "run_xui_install_and_inbounds generates VLESS Encryption keys before creating any inbound" {
+  local installer="${BATS_TEST_DIRNAME}/../setup.sh"
 
-  run grep -A8 '^main() {' "$installer"
+  run grep -A10 '^run_xui_install_and_inbounds()' "$installer"
   [ "$status" -eq 0 ]
   local key_line inbound_line
   key_line="$(printf '%s\n' "$output" | grep -n 'ensure_vless_encryption_keys' | head -1 | cut -d: -f1)"
@@ -1256,12 +1257,12 @@ print_summary_env() {
 }
 
 # ---------------------------------------------------------------------------
-# VLESS+Reality -- optional direct-connection inbound, static assertions
-# for the same BASH_SOURCE-guard reason as the VLESS Encryption tests above.
+# VLESS+Reality -- optional direct-connection inbound, static source-text
+# assertions (same rationale as the VLESS Encryption block above).
 # ---------------------------------------------------------------------------
 
 @test "ensure_reality_keys calls getNewX25519Cert and is a no-op when Reality is disabled" {
-  local installer="${BATS_TEST_DIRNAME}/../setup-3x-ui.sh"
+  local installer="${BATS_TEST_DIRNAME}/../setup.sh"
 
   run grep -A25 '^ensure_reality_keys()' "$installer"
   [ "$status" -eq 0 ]
@@ -1270,7 +1271,7 @@ print_summary_env() {
 }
 
 @test "ensure_reality_inbound skips creation when REALITY_SUBDOMAIN is empty" {
-  local installer="${BATS_TEST_DIRNAME}/../setup-3x-ui.sh"
+  local installer="${BATS_TEST_DIRNAME}/../setup.sh"
 
   run grep -A6 '^ensure_reality_inbound()' "$installer"
   [ "$status" -eq 0 ]
@@ -1278,7 +1279,7 @@ print_summary_env() {
 }
 
 @test "ensure_reality_inbound builds realitySettings with target, serverNames and shortIds" {
-  local installer="${BATS_TEST_DIRNAME}/../setup-3x-ui.sh"
+  local installer="${BATS_TEST_DIRNAME}/../setup.sh"
 
   run grep -A70 '^ensure_reality_inbound()' "$installer"
   [ "$status" -eq 0 ]
@@ -1289,63 +1290,64 @@ print_summary_env() {
 }
 
 @test "ensure_reality_inbound passes flow xtls-rprx-vision and leaves decryption at none" {
-  local installer="${BATS_TEST_DIRNAME}/../setup-3x-ui.sh"
+  local installer="${BATS_TEST_DIRNAME}/../setup.sh"
 
   run grep 'xui_add_inbound "\$REALITY_PORT"' "$installer"
   [ "$status" -eq 0 ]
   [[ "$output" == *'"none" "xtls-rprx-vision"'* ]]
 }
 
-@test "main calls ensure_reality_keys and ensure_reality_inbound and reports both keys" {
-  local installer="${BATS_TEST_DIRNAME}/../setup-3x-ui.sh"
+@test "run_xui_install_and_inbounds calls ensure_reality_keys, ensure_reality_inbound and ensure_reality_host" {
+  local installer="${BATS_TEST_DIRNAME}/../setup.sh"
 
-  run grep -A15 '^main() {' "$installer"
+  run grep -A16 '^run_xui_install_and_inbounds()' "$installer"
   [ "$status" -eq 0 ]
   [[ "$output" == *"ensure_reality_keys"* ]]
   [[ "$output" == *"ensure_reality_inbound"* ]]
-  [[ "$output" == *'REALITY_PRIVATE_KEY=%s'* ]]
-  [[ "$output" == *'REALITY_PUBLIC_KEY=%s'* ]]
+  [[ "$output" == *"ensure_reality_host"* ]]
 }
 
 # ---------------------------------------------------------------------------
-# install_3xui_and_inbounds -- stubs the real install-3xui.sh via
-# INSTALL_3XUI_SCRIPT so no network/root access is required.
+# install_3xui_and_inbounds -- exercises the real orchestration logic
+# (deriving PANEL_PORT/PANEL_PATH, validating required outputs, re-checking
+# PANEL_PORT, calling save_config) by stubbing out run_xui_install_and_
+# inbounds, which is what actually talks to a real 3x-ui panel/network (that
+# part is covered by the "real 3x-ui" e2e tier instead, see tests/e2e).
+#
+# There is no longer a subprocess boundary between setup.sh and 3x-ui setup
+# (both merged into one script/one shared variable scope), so tests that
+# used to check "does env var X survive being forwarded to the installer
+# subprocess" no longer apply -- there's no serialization step left to drop
+# a variable. Only install_3xui_and_inbounds's own orchestration logic
+# (validation, PANEL_PORT/PANEL_PATH derivation, save_config, error
+# propagation) is still meaningful to test here.
 # ---------------------------------------------------------------------------
 
-write_installer_stub() {
-  # $1: path to write the stub to. $2+: extra lines appended verbatim before
-  # the final KEY=VALUE report block (e.g. to assert on received env vars).
-  local stub_path="$1"
-  cat > "$stub_path" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-EOF
-  shift
-  local extra
-  for extra in "$@"; do
-    printf '%s\n' "$extra" >> "$stub_path"
-  done
-  cat >> "$stub_path" <<'EOF'
-printf 'PANEL_PORT=%s\n' "${PANEL_PORT}"
-printf 'PANEL_PATH=/generated-base-path\n'
-printf 'XUI_USERNAME=admin_generated\n'
-printf 'XUI_PASSWORD=generated-pass-1234\n'
-printf 'CLIENT_UUID=%s\n' "${CLIENT_UUID:-11111111-2222-3333-4444-555555555555}"
-printf 'CLIENT_SUB_ID=%s\n' "${CLIENT_SUB_ID:-abcdef1234567890}"
-printf 'VLESS_ENCRYPTION_SERVER_KEY=%s\n' "${VLESS_ENCRYPTION_SERVER_KEY:-mlkem768-server-stub}"
-printf 'VLESS_ENCRYPTION_CLIENT_KEY=%s\n' "${VLESS_ENCRYPTION_CLIENT_KEY:-mlkem768-client-stub}"
-if [[ -n "${REALITY_SUBDOMAIN:-}" ]]; then
-  printf 'REALITY_PRIVATE_KEY=%s\n' "${REALITY_PRIVATE_KEY:-reality-priv-stub}"
-  printf 'REALITY_PUBLIC_KEY=%s\n' "${REALITY_PUBLIC_KEY:-reality-pub-stub}"
-else
-  printf 'REALITY_PRIVATE_KEY=\n'
-  printf 'REALITY_PUBLIC_KEY=\n'
-fi
-EOF
-  chmod +x "$stub_path"
+# Stubs run_xui_install_and_inbounds (the real chain that talks to a real
+# 3x-ui panel) with a fake that sets the same globals the real chain would.
+# $1, if given, is extra bash code eval'd at the start of the fake (e.g. to
+# simulate a failure via `die ...` or `return 1`, or to record received
+# globals for assertions).
+stub_run_xui_install_and_inbounds() {
+  XUI_STUB_HOOK="${1:-:}"
+  run_xui_install_and_inbounds() {
+    eval "$XUI_STUB_HOOK"
+    XUI_PANEL_PORT="${XUI_PANEL_PORT:-$PANEL_PORT}"
+    XUI_WEB_BASE_PATH="${XUI_WEB_BASE_PATH:-generated-base-path}"
+    XUI_USERNAME="${XUI_USERNAME:-admin_generated}"
+    XUI_PASSWORD="${XUI_PASSWORD:-generated-pass-1234}"
+    [[ -n "$CLIENT_UUID" ]] || CLIENT_UUID="11111111-2222-3333-4444-555555555555"
+    [[ -n "$CLIENT_SUB_ID" ]] || CLIENT_SUB_ID="abcdef1234567890"
+    VLESS_ENCRYPTION_SERVER_KEY="${VLESS_ENCRYPTION_SERVER_KEY:-mlkem768-server-stub}"
+    VLESS_ENCRYPTION_CLIENT_KEY="${VLESS_ENCRYPTION_CLIENT_KEY:-mlkem768-client-stub}"
+    if [[ -n "$REALITY_SUBDOMAIN" ]]; then
+      REALITY_PRIVATE_KEY="${REALITY_PRIVATE_KEY:-reality-priv-stub}"
+      REALITY_PUBLIC_KEY="${REALITY_PUBLIC_KEY:-reality-pub-stub}"
+    fi
+  }
 }
 
-@test "install_3xui_and_inbounds populates PANEL_PORT/PANEL_PATH/creds/UUID from the installer's output" {
+@test "install_3xui_and_inbounds populates PANEL_PORT/PANEL_PATH/creds/UUID from the install chain" {
   CONFIG_FILE="${BATS_TEST_TMPDIR}/xui-proxy.conf"
   PANEL_PORT="51234"
   WS_PORT="51235"
@@ -1360,9 +1362,7 @@ EOF
   EMAIL="user@example.com"
   SUB_PATH="/sub"
 
-  local stub="${BATS_TEST_TMPDIR}/install-3xui.sh"
-  write_installer_stub "$stub"
-  export INSTALL_3XUI_SCRIPT="$stub"
+  stub_run_xui_install_and_inbounds
 
   # Deliberately NOT using `run` here: run captures the call via a
   # command-substitution subshell, so global-variable mutations made by
@@ -1399,9 +1399,7 @@ EOF
   REALITY_PORT="20000"
   REALITY_SHORT_ID="abcd1234"
 
-  local stub="${BATS_TEST_TMPDIR}/install-3xui.sh"
-  write_installer_stub "$stub"
-  export INSTALL_3XUI_SCRIPT="$stub"
+  stub_run_xui_install_and_inbounds
 
   install_3xui_and_inbounds
   [ "$REALITY_PRIVATE_KEY" == "reality-priv-stub" ]
@@ -1424,15 +1422,13 @@ EOF
   EMAIL="user@example.com"
   REALITY_SUBDOMAIN=""
 
-  local stub="${BATS_TEST_TMPDIR}/install-3xui.sh"
-  write_installer_stub "$stub"
-  export INSTALL_3XUI_SCRIPT="$stub"
+  stub_run_xui_install_and_inbounds
 
   run install_3xui_and_inbounds
   [ "$status" -eq 0 ]
 }
 
-@test "install_3xui_and_inbounds dies if REALITY_SUBDOMAIN is set but the installer reports no Reality keys" {
+@test "install_3xui_and_inbounds dies if REALITY_SUBDOMAIN is set but the install chain reports no Reality keys" {
   CONFIG_FILE="${BATS_TEST_TMPDIR}/xui-proxy.conf"
   PANEL_PORT="51234"
   WS_PORT="51235"
@@ -1451,78 +1447,26 @@ EOF
   REALITY_PORT="20000"
   REALITY_SHORT_ID="abcd1234"
 
-  local stub="${BATS_TEST_TMPDIR}/install-3xui.sh"
-  cat > "$stub" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-printf 'PANEL_PORT=%s\n' "${PANEL_PORT}"
-printf 'PANEL_PATH=/generated-base-path\n'
-printf 'XUI_USERNAME=admin_generated\n'
-printf 'XUI_PASSWORD=generated-pass-1234\n'
-printf 'CLIENT_UUID=11111111-2222-3333-4444-555555555555\n'
-printf 'VLESS_ENCRYPTION_SERVER_KEY=mlkem768-server-stub\n'
-printf 'VLESS_ENCRYPTION_CLIENT_KEY=mlkem768-client-stub\n'
-EOF
-  chmod +x "$stub"
-  export INSTALL_3XUI_SCRIPT="$stub"
+  # Stub deliberately leaves REALITY_PRIVATE_KEY/PUBLIC_KEY unset even
+  # though REALITY_SUBDOMAIN is set, simulating the install chain failing
+  # to produce them. Returns immediately after, so the fake's own
+  # default-filling logic (which would otherwise backfill them) never runs.
+  stub_run_xui_install_and_inbounds '
+    XUI_PANEL_PORT="$PANEL_PORT"
+    XUI_WEB_BASE_PATH="generated-base-path"
+    XUI_USERNAME="admin_generated"
+    XUI_PASSWORD="generated-pass-1234"
+    CLIENT_UUID="11111111-2222-3333-4444-555555555555"
+    VLESS_ENCRYPTION_SERVER_KEY="mlkem768-server-stub"
+    VLESS_ENCRYPTION_CLIENT_KEY="mlkem768-client-stub"
+    REALITY_PRIVATE_KEY=""
+    REALITY_PUBLIC_KEY=""
+    return 0
+  '
 
   run install_3xui_and_inbounds
   [ "$status" -eq 1 ]
-  [[ "$output" == *"did not report REALITY_PRIVATE_KEY/REALITY_PUBLIC_KEY"* ]]
-}
-
-@test "install_3xui_and_inbounds forwards REALITY_DOMAIN as REALITY_SUBDOMAIN.BASE_DOMAIN" {
-  CONFIG_FILE="${BATS_TEST_TMPDIR}/xui-proxy.conf"
-  PANEL_PORT="51234"
-  WS_PORT="51235"
-  WS_PATH="/api/v1/events"
-  GRPC_PORT="51236"
-  GRPC_SERVICE="api.v1.SyncService"
-  SUB_PORT="2096"
-  SUB_PATH="/sub"
-  CLIENT_UUID=""
-  BASE_DOMAIN="example.com"
-  PANEL_SUBDOMAIN="admin"
-  VLESS_SUBDOMAIN="vpn"
-  EMAIL="user@example.com"
-  REALITY_SUBDOMAIN="reality"
-  REALITY_DEST="github.com"
-  REALITY_PORT="20000"
-  REALITY_SHORT_ID="abcd1234"
-
-  local stub="${BATS_TEST_TMPDIR}/install-3xui.sh"
-  local received_log="${BATS_TEST_TMPDIR}/received-reality-domain"
-  write_installer_stub "$stub" "echo \"\${REALITY_DOMAIN}\" > '${received_log}'"
-  export INSTALL_3XUI_SCRIPT="$stub"
-
-  run install_3xui_and_inbounds
-  [ "$status" -eq 0 ]
-  [ "$(cat "$received_log")" == "reality.example.com" ]
-}
-
-@test "install_3xui_and_inbounds passes the pre-reserved PANEL_PORT to the installer as-is" {
-  CONFIG_FILE="${BATS_TEST_TMPDIR}/xui-proxy.conf"
-  PANEL_PORT="51234"
-  WS_PORT="51235"
-  WS_PATH="/api/v1/events"
-  GRPC_PORT="51236"
-  GRPC_SERVICE="api.v1.SyncService"
-  SUB_PORT="2096"
-  CLIENT_UUID=""
-  BASE_DOMAIN="example.com"
-  PANEL_SUBDOMAIN="admin"
-  VLESS_SUBDOMAIN="vpn"
-  EMAIL="user@example.com"
-  SUB_PATH="/sub"
-
-  local stub="${BATS_TEST_TMPDIR}/install-3xui.sh"
-  local received_log="${BATS_TEST_TMPDIR}/received-panel-port"
-  write_installer_stub "$stub" "echo \"\${PANEL_PORT}\" > '${received_log}'"
-  export INSTALL_3XUI_SCRIPT="$stub"
-
-  run install_3xui_and_inbounds
-  [ "$status" -eq 0 ]
-  [ "$(cat "$received_log")" == "51234" ]
+  [[ "$output" == *"REALITY_PRIVATE_KEY/REALITY_PUBLIC_KEY were not produced"* ]]
 }
 
 # ---------------------------------------------------------------------------
@@ -2022,36 +1966,6 @@ EOF
   grep -q "systemctl reload caddy" "$CERTBOT_DEPLOY_HOOK"
 }
 
-@test "install_3xui_and_inbounds forwards generated inbound remarks to the panel helper" {
-  CONFIG_FILE="${BATS_TEST_TMPDIR}/xui-proxy.conf"
-  PANEL_PORT="51234"
-  WS_PORT="51235"
-  WS_PATH="/api/v1/events"
-  GRPC_PORT="51236"
-  GRPC_SERVICE="api.v1.SyncService"
-  XHTTP_PORT="51237"
-  XHTTP_PATH="/api/v1/ingest"
-  SUB_PORT="2096"
-  SUB_PATH="/sub"
-  CLIENT_UUID=""
-  BASE_DOMAIN="example.com"
-  PANEL_SUBDOMAIN="admin"
-  VLESS_SUBDOMAIN="vpn"
-  EMAIL="user@example.com"
-  INBOUND_REMARK_WS="🇪🇪 WebSocket-CDN"
-  INBOUND_REMARK_GRPC="🇪🇪 gRPC-CDN"
-  INBOUND_REMARK_XHTTP="🇪🇪 XHTTP-CDN"
-
-  local stub="${BATS_TEST_TMPDIR}/install-3xui.sh"
-  local received_log="${BATS_TEST_TMPDIR}/received-remarks"
-  write_installer_stub "$stub" "printf '%s\\n%s\\n%s\\n' \"\${INBOUND_REMARK_WS}\" \"\${INBOUND_REMARK_GRPC}\" \"\${INBOUND_REMARK_XHTTP}\" > '${received_log}'"
-  export INSTALL_3XUI_SCRIPT="$stub"
-
-  run install_3xui_and_inbounds
-  [ "$status" -eq 0 ]
-  [ "$(cat "$received_log")" == $'🇪🇪 WebSocket-CDN\n🇪🇪 gRPC-CDN\n🇪🇪 XHTTP-CDN' ]
-}
-
 @test "install_3xui_and_inbounds dies if PANEL_PORT ends up colliding (validate_panel_port re-check)" {
   CONFIG_FILE="${BATS_TEST_TMPDIR}/xui-proxy.conf"
   PANEL_PORT="51234"
@@ -2069,27 +1983,22 @@ EOF
 
   # Simulate 3x-ui having already been installed before with its own port,
   # which happens to collide with WS_PORT.
-  local stub="${BATS_TEST_TMPDIR}/install-3xui.sh"
-  cat > "$stub" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-printf 'PANEL_PORT=%s\n' "${WS_PORT}"
-printf 'PANEL_PATH=/generated-base-path\n'
-printf 'XUI_USERNAME=admin_generated\n'
-printf 'XUI_PASSWORD=generated-pass-1234\n'
-printf 'CLIENT_UUID=11111111-2222-3333-4444-555555555555\n'
-printf 'VLESS_ENCRYPTION_SERVER_KEY=mlkem768-server-stub\n'
-printf 'VLESS_ENCRYPTION_CLIENT_KEY=mlkem768-client-stub\n'
-EOF
-  chmod +x "$stub"
-  export INSTALL_3XUI_SCRIPT="$stub"
+  stub_run_xui_install_and_inbounds '
+    XUI_PANEL_PORT="$WS_PORT"
+    XUI_WEB_BASE_PATH="generated-base-path"
+    XUI_USERNAME="admin_generated"
+    XUI_PASSWORD="generated-pass-1234"
+    CLIENT_UUID="11111111-2222-3333-4444-555555555555"
+    VLESS_ENCRYPTION_SERVER_KEY="mlkem768-server-stub"
+    VLESS_ENCRYPTION_CLIENT_KEY="mlkem768-client-stub"
+  '
 
   run install_3xui_and_inbounds
   [ "$status" -eq 1 ]
   [[ "$output" == *"collides with WS_PORT"* ]]
 }
 
-@test "install_3xui_and_inbounds dies if the installer produces no output" {
+@test "install_3xui_and_inbounds dies if the install chain doesn't produce the required outputs" {
   CONFIG_FILE="${BATS_TEST_TMPDIR}/xui-proxy.conf"
   PANEL_PORT="51234"
   WS_PORT="51235"
@@ -2099,20 +2008,14 @@ EOF
   SUB_PORT="2096"
   CLIENT_UUID=""
 
-  local stub="${BATS_TEST_TMPDIR}/install-3xui.sh"
-  cat > "$stub" <<'EOF'
-#!/usr/bin/env bash
-exit 0
-EOF
-  chmod +x "$stub"
-  export INSTALL_3XUI_SCRIPT="$stub"
+  stub_run_xui_install_and_inbounds 'return 0'
 
   run install_3xui_and_inbounds
   [ "$status" -eq 1 ]
-  [[ "$output" == *"did not report PANEL_PORT"* ]]
+  [[ "$output" == *"did not produce PANEL_PORT"* ]]
 }
 
-@test "install_3xui_and_inbounds dies if setup-3x-ui.sh itself fails" {
+@test "install_3xui_and_inbounds dies if the install chain itself fails" {
   PANEL_PORT="51234"
   WS_PORT="51235"
   WS_PATH="/api/v1/events"
@@ -2120,39 +2023,11 @@ EOF
   GRPC_SERVICE="api.v1.SyncService"
   CLIENT_UUID=""
 
-  local stub="${BATS_TEST_TMPDIR}/install-3xui.sh"
-  cat > "$stub" <<'EOF'
-#!/usr/bin/env bash
-echo "boom" >&2
-exit 1
-EOF
-  chmod +x "$stub"
-  export SETUP_3X_UI_SCRIPT="$stub"
+  stub_run_xui_install_and_inbounds 'echo "boom" >&2; return 1'
 
   run install_3xui_and_inbounds
   [ "$status" -eq 1 ]
-  [[ "$output" == *"setup-3x-ui.sh failed"* ]]
-}
-
-@test "install_3xui_and_inbounds forwards XUI_VERSION to install-3xui.sh" {
-  CONFIG_FILE="${BATS_TEST_TMPDIR}/xui-proxy.conf"
-  PANEL_PORT="51234"
-  WS_PORT="51235"
-  WS_PATH="/api/v1/events"
-  GRPC_PORT="51236"
-  GRPC_SERVICE="api.v1.SyncService"
-  SUB_PORT="2096"
-  CLIENT_UUID=""
-  XUI_VERSION="v3.4.0"
-
-  local stub="${BATS_TEST_TMPDIR}/install-3xui.sh"
-  local received_log="${BATS_TEST_TMPDIR}/received-xui-version"
-  write_installer_stub "$stub" "echo \"\${XUI_VERSION:-}\" > '${received_log}'"
-  export INSTALL_3XUI_SCRIPT="$stub"
-
-  run install_3xui_and_inbounds
-  [ "$status" -eq 0 ]
-  [ "$(cat "$received_log")" == "v3.4.0" ]
+  [[ "$output" == *"boom"* ]]
 }
 
 # ---------------------------------------------------------------------------
@@ -2209,11 +2084,6 @@ setup_uninstall_fixtures() {
   : > "$STATE_FILE"
   : > "$CONFIG_FILE"
 
-  local installer_marker="${BATS_TEST_TMPDIR}/installer-called"
-  local installer_stub="${BATS_TEST_TMPDIR}/install-3xui.sh"
-  write_uninstall_stub "$installer_stub" "$installer_marker"
-  export INSTALL_3XUI_SCRIPT="$installer_stub"
-
   run uninstall_all <<< "y"
   [ "$status" -eq 0 ]
 
@@ -2225,16 +2095,14 @@ setup_uninstall_fixtures() {
   [ ! -e "$STATE_FILE" ]
   [ ! -e "$CONFIG_FILE" ]
 
-  [ -f "$installer_marker" ]
-  [[ "$(cat "$installer_marker")" == *"--uninstall"* ]]
+  # 3x-ui removal is now inlined (no separate subprocess) -- with neither
+  # /etc/x-ui nor /usr/local/x-ui present in this fixture, it correctly
+  # reports there's nothing to uninstall rather than erroring.
+  [[ "$output" == *"3x-ui is not installed, nothing to uninstall"* ]]
 }
 
 @test "uninstall_all removes the ufw rules it previously added" {
   setup_uninstall_fixtures
-
-  local installer_stub="${BATS_TEST_TMPDIR}/install-3xui.sh"
-  write_uninstall_stub "$installer_stub" "${BATS_TEST_TMPDIR}/installer-called"
-  export INSTALL_3XUI_SCRIPT="$installer_stub"
 
   export UFW_LOG="${BATS_TEST_TMPDIR}/ufw.log"
   : > "$UFW_LOG"
@@ -2253,10 +2121,6 @@ setup_uninstall_fixtures() {
 
 @test "uninstall_all stops caddy and removes NaiveProxy files" {
   setup_uninstall_fixtures
-
-  local installer_stub="${BATS_TEST_TMPDIR}/install-3xui.sh"
-  write_uninstall_stub "$installer_stub" "${BATS_TEST_TMPDIR}/installer-called"
-  export INSTALL_3XUI_SCRIPT="$installer_stub"
 
   NAIVE_SYSTEMD_UNIT="${BATS_TEST_TMPDIR}/caddy.service"
   CADDYFILE="${BATS_TEST_TMPDIR}/Caddyfile"
@@ -2288,10 +2152,6 @@ setup_uninstall_fixtures() {
 @test "uninstall_all keeps the certbot cert by default" {
   setup_uninstall_fixtures
 
-  local installer_stub="${BATS_TEST_TMPDIR}/install-3xui.sh"
-  write_uninstall_stub "$installer_stub" "${BATS_TEST_TMPDIR}/installer-called"
-  export INSTALL_3XUI_SCRIPT="$installer_stub"
-
   export CERTBOT_LOG="${BATS_TEST_TMPDIR}/certbot.log"
   : > "$CERTBOT_LOG"
 
@@ -2303,10 +2163,6 @@ setup_uninstall_fixtures() {
 
 @test "uninstall_all deletes the certbot cert when DELETE_CERT=true" {
   setup_uninstall_fixtures
-
-  local installer_stub="${BATS_TEST_TMPDIR}/install-3xui.sh"
-  write_uninstall_stub "$installer_stub" "${BATS_TEST_TMPDIR}/installer-called"
-  export INSTALL_3XUI_SCRIPT="$installer_stub"
 
   export CERTBOT_LOG="${BATS_TEST_TMPDIR}/certbot.log"
   : > "$CERTBOT_LOG"
@@ -2323,10 +2179,6 @@ setup_uninstall_fixtures() {
 
   : > "$NGINX_SITE"
 
-  local installer_stub="${BATS_TEST_TMPDIR}/install-3xui.sh"
-  write_uninstall_stub "$installer_stub" "${BATS_TEST_TMPDIR}/installer-called"
-  export INSTALL_3XUI_SCRIPT="$installer_stub"
-
   run uninstall_all <<< "n"
   [ "$status" -eq 0 ]
   [[ "$output" == *"Cancelled."* ]]
@@ -2335,10 +2187,10 @@ setup_uninstall_fixtures() {
 }
 
 # ---------------------------------------------------------------------------
-# install_3xui_and_inbounds — CLIENT_SUB_ID forwarding
+# install_3xui_and_inbounds — CLIENT_SUB_ID generation/reuse
 # ---------------------------------------------------------------------------
 
-@test "install_3xui_and_inbounds captures CLIENT_SUB_ID from installer output" {
+@test "install_3xui_and_inbounds captures a generated CLIENT_SUB_ID when unset" {
   CONFIG_FILE="${BATS_TEST_TMPDIR}/xui-proxy.conf"
   PANEL_PORT="51234"
   WS_PORT="51235"
@@ -2354,41 +2206,13 @@ setup_uninstall_fixtures() {
   VLESS_SUBDOMAIN="vpn"
   EMAIL="user@example.com"
 
-  local stub="${BATS_TEST_TMPDIR}/install-3xui.sh"
-  write_installer_stub "$stub"
-  export INSTALL_3XUI_SCRIPT="$stub"
+  stub_run_xui_install_and_inbounds
 
   install_3xui_and_inbounds
   [ "$CLIENT_SUB_ID" == "abcdef1234567890" ]
 }
 
-@test "install_3xui_and_inbounds forwards SUB_PORT and SUB_PATH to installer" {
-  CONFIG_FILE="${BATS_TEST_TMPDIR}/xui-proxy.conf"
-  PANEL_PORT="51234"
-  WS_PORT="51235"
-  WS_PATH="/api/v1/events"
-  GRPC_PORT="51236"
-  GRPC_SERVICE="api.v1.SyncService"
-  SUB_PORT="54321"
-  SUB_PATH="/assets/abc123"
-  CLIENT_UUID=""
-  CLIENT_SUB_ID=""
-  BASE_DOMAIN="example.com"
-  PANEL_SUBDOMAIN="admin"
-  VLESS_SUBDOMAIN="vpn"
-  EMAIL="user@example.com"
-
-  local stub="${BATS_TEST_TMPDIR}/install-3xui.sh"
-  local received_log="${BATS_TEST_TMPDIR}/received-sub-vars"
-  write_installer_stub "$stub" "echo \"\${SUB_PORT}|\${SUB_PATH}\" > '${received_log}'"
-  export INSTALL_3XUI_SCRIPT="$stub"
-
-  run install_3xui_and_inbounds
-  [ "$status" -eq 0 ]
-  [ "$(cat "$received_log")" == "54321|/assets/abc123" ]
-}
-
-@test "install_3xui_and_inbounds forwards CLIENT_SUB_ID for reuse on reruns" {
+@test "install_3xui_and_inbounds reuses an existing CLIENT_SUB_ID instead of regenerating it" {
   CONFIG_FILE="${BATS_TEST_TMPDIR}/xui-proxy.conf"
   PANEL_PORT="51234"
   WS_PORT="51235"
@@ -2404,14 +2228,12 @@ setup_uninstall_fixtures() {
   VLESS_SUBDOMAIN="vpn"
   EMAIL="user@example.com"
 
-  local stub="${BATS_TEST_TMPDIR}/install-3xui.sh"
-  local received_log="${BATS_TEST_TMPDIR}/received-sub-id"
-  write_installer_stub "$stub" "echo \"\${CLIENT_SUB_ID}\" > '${received_log}'"
-  export INSTALL_3XUI_SCRIPT="$stub"
+  stub_run_xui_install_and_inbounds
 
-  run install_3xui_and_inbounds
-  [ "$status" -eq 0 ]
-  [ "$(cat "$received_log")" == "my_existing_sub_id" ]
+  # Not using `run`: its subshell would hide the CLIENT_SUB_ID mutation
+  # (or lack thereof) from this test's shell afterwards.
+  install_3xui_and_inbounds
+  [ "$CLIENT_SUB_ID" == "my_existing_sub_id" ]
 }
 
 # ---------------------------------------------------------------------------
@@ -2704,10 +2526,6 @@ EOF
   local anonymize_stub="${BATS_TEST_TMPDIR}/anonymize.sh"
   write_uninstall_stub "$anonymize_stub" "$anonymize_marker"
   export ANONYMIZE_SCRIPT="$anonymize_stub"
-
-  local installer_stub="${BATS_TEST_TMPDIR}/install-3xui.sh"
-  write_uninstall_stub "$installer_stub" "${BATS_TEST_TMPDIR}/installer-called"
-  export INSTALL_3XUI_SCRIPT="$installer_stub"
 
   run uninstall_all <<< "y"
   [ "$status" -eq 0 ]

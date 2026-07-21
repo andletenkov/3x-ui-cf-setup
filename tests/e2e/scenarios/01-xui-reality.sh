@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
 # Scenario 1: installs a REAL 3x-ui panel (the actual upstream installer, no
-# stubs) and drives setup-3x-ui.sh's real functions against it, then asserts
-# on the REAL API responses. This is the tier that would have caught every
+# stubs) and drives setup.sh's real 3x-ui functions against it (merged
+# directly into setup.sh -- no more subprocess boundary), then asserts on
+# the REAL API responses. This is the tier that would have caught every
 # 3x-ui-related bug from the 2026-07-20/21 Reality debugging session:
 #   - getNewmlkem768 field-name drift (serverKey/clientKey vs seed/client)
 #   - Reality inbound missing the nested realitySettings.settings.publicKey
 #   - externalProxy polluting 3x-ui's persistent `hosts` table and forcing
 #     security=tls in every subscription-generated Reality link
 #   - subscription output not reflecting the public domain:port
+#   - VPS_COUNTRY_CODE / INBOUND_REMARK_REALITY silently failing to cross
+#     the (now-removed) setup.sh -> setup-3x-ui.sh subprocess boundary
 #
 # Run inside the e2e container (see run.sh). Exits non-zero with a specific
 # message on the first failed assertion.
@@ -57,81 +60,52 @@ assert_nonempty() {
   fi
 }
 
-echo "--- Installing real 3x-ui via upstream installer ---" >&2
-export PANEL_PORT=23456
-export WS_PORT=23457 GRPC_PORT=23458 XHTTP_PORT=23459 SUB_PORT=23460
-export WS_PATH="/ws$(openssl rand -hex 4)"
-export GRPC_SERVICE="grpc-$(openssl rand -hex 4)"
-export XHTTP_PATH="/xhttp$(openssl rand -hex 4)"
-export SUB_PATH="/sub$(openssl rand -hex 4)"
-export CLIENT_UUID
+cd "$REPO"
+chmod +x setup.sh
+
+# shellcheck disable=SC1091
+source ./setup.sh
+
+# --- Set the variable environment install_3xui_and_inbounds expects. MUST
+# happen AFTER sourcing: setup.sh unconditionally resets these to their
+# defaults ('' for most) at top-level scope, so setting them before sourcing
+# would just get clobbered.
+PANEL_PORT=23456
+WS_PORT=23457; GRPC_PORT=23458; XHTTP_PORT=23459; SUB_PORT=23460
+WS_PATH="/ws$(openssl rand -hex 4)"
+GRPC_SERVICE="grpc-$(openssl rand -hex 4)"
+XHTTP_PATH="/xhttp$(openssl rand -hex 4)"
+SUB_PATH="/sub$(openssl rand -hex 4)"
 CLIENT_UUID="$(python3 -c 'import uuid; print(uuid.uuid4())')"
-export CLIENT_SUB_ID
 CLIENT_SUB_ID="$(openssl rand -hex 8)"
-export SUB_DOMAIN="panel.e2e.test"
-export VLESS_DOMAIN="vless.e2e.test"
-export REALITY_SUBDOMAIN="reality"
-export REALITY_DEST="github.com"
-export REALITY_PORT=23461
-export REALITY_SHORT_ID="deadbeef"
-export REALITY_DOMAIN="reality.e2e.test"
-export BASE_DOMAIN="e2e.test"
-export INBOUND_REMARK_WS="e2e WS" INBOUND_REMARK_GRPC="e2e gRPC" INBOUND_REMARK_XHTTP="e2e XHTTP"
+BASE_DOMAIN="e2e.test"
+PANEL_SUBDOMAIN="panel"
+VLESS_SUBDOMAIN="vless"
+REALITY_SUBDOMAIN="reality"
+REALITY_DEST="github.com"
+REALITY_PORT=23461
+REALITY_SHORT_ID="deadbeef"
+INBOUND_REMARK_WS="e2e WS"; INBOUND_REMARK_GRPC="e2e gRPC"; INBOUND_REMARK_XHTTP="e2e XHTTP"
 # Deliberately left unset (not INBOUND_REMARK_REALITY="..."): this forces
 # ensure_reality_inbound down the detect_country_flag() fallback path, so
-# the assertion below actually exercises VPS_COUNTRY_CODE forwarding across
-# the setup.sh -> setup-3x-ui.sh subprocess boundary, instead of trivially
-# passing because a remark was hardcoded end-to-end.
-export VPS_COUNTRY_CODE="EE"
+# the assertion below actually exercises VPS_COUNTRY_CODE handling for real.
+VPS_COUNTRY_CODE="EE"
 
-cd "$REPO"
-chmod +x setup-3x-ui.sh
+echo "--- Installing real 3x-ui via upstream installer ---" >&2
+install_3xui_and_inbounds || { fail "install_3xui_and_inbounds exited non-zero"; exit 1; }
 
-installer_out="$(./setup-3x-ui.sh)" || { fail "setup-3x-ui.sh exited non-zero"; exit 1; }
+assert_nonempty "PANEL_PATH set" "$PANEL_PATH"
+assert_nonempty "XUI_USERNAME set" "$XUI_USERNAME"
+assert_nonempty "CLIENT_UUID set" "$CLIENT_UUID"
+assert_nonempty "VLESS_ENCRYPTION_SERVER_KEY set (catches getNewmlkem768 field-name drift)" \
+  "$VLESS_ENCRYPTION_SERVER_KEY"
+assert_nonempty "REALITY_PRIVATE_KEY set" "$REALITY_PRIVATE_KEY"
+assert_nonempty "REALITY_PUBLIC_KEY set" "$REALITY_PUBLIC_KEY"
 
-declare -A OUT
-while IFS='=' read -r k v; do
-  [[ -n "$k" ]] || continue
-  OUT["$k"]="$v"
-done <<< "$installer_out"
-
-assert_nonempty "PANEL_PATH reported" "${OUT[PANEL_PATH]:-}"
-assert_nonempty "XUI_USERNAME reported" "${OUT[XUI_USERNAME]:-}"
-assert_nonempty "CLIENT_UUID reported" "${OUT[CLIENT_UUID]:-}"
-assert_nonempty "VLESS_ENCRYPTION_SERVER_KEY reported (catches getNewmlkem768 field-name drift)" \
-  "${OUT[VLESS_ENCRYPTION_SERVER_KEY]:-}"
-assert_nonempty "REALITY_PRIVATE_KEY reported" "${OUT[REALITY_PRIVATE_KEY]:-}"
-assert_nonempty "REALITY_PUBLIC_KEY reported" "${OUT[REALITY_PUBLIC_KEY]:-}"
-
-PANEL_PATH="${OUT[PANEL_PATH]}"
-BASE_URL="http://127.0.0.1:${PANEL_PORT}${PANEL_PATH}"
-
-# Re-derive auth the same way setup-3x-ui.sh's setup_api_auth does, by
-# reading the install-result file it sourced -- avoids re-implementing auth
-# here. Prefers the Bearer token; falls back to cookie login if the
-# installer didn't generate one.
-# shellcheck disable=SC1091
-source /etc/x-ui/install-result.env
-
-COOKIE_JAR="$(mktemp)"
-if [[ -z "${XUI_API_TOKEN:-}" ]]; then
-  curl -fsS -c "$COOKIE_JAR" \
-    -H 'Content-Type: application/x-www-form-urlencoded' \
-    --data-urlencode "username=${XUI_USERNAME}" \
-    --data-urlencode "password=${XUI_PASSWORD}" \
-    "${BASE_URL}/login" >/dev/null
-fi
-
-api() {
-  if [[ -n "${XUI_API_TOKEN:-}" ]]; then
-    curl -fsS -H "Authorization: Bearer ${XUI_API_TOKEN}" "$@"
-  else
-    curl -fsS -b "$COOKIE_JAR" "$@"
-  fi
-}
-
+# BASE_URL/api_curl are already populated by install_3xui_and_inbounds's
+# internal call to setup_api_auth -- no need to re-derive auth here.
 echo "--- Checking Reality inbound via real 3x-ui API ---" >&2
-inbounds_json="$(api -X GET "${BASE_URL}/panel/api/inbounds/list")"
+inbounds_json="$(api_curl -X GET "${BASE_URL}/panel/api/inbounds/list")"
 
 reality_inbound="$(python3 -c "
 import json, sys
@@ -152,13 +126,10 @@ print(stream.get('security',''))
 " "$reality_inbound")"
 assert_eq "Reality inbound streamSettings.security" "reality" "$security"
 
-# Regression check: setup-3x-ui.sh runs as a separate subprocess from
-# setup.sh and used to carry its own out-of-sync detect_country_flag() that
-# ignored VPS_COUNTRY_CODE entirely, always live-geolocating the VPS's
-# actual IP instead (frequently reporting the wrong country for the
-# configured/desired flag). Assert the remark uses the EE regional-indicator
-# emoji (\U0001F1EA\U0001F1EA) requested via VPS_COUNTRY_CODE, not whatever
-# a live geolocation lookup would return for this CI runner's IP.
+# Regression check: VPS_COUNTRY_CODE must be honored by detect_country_flag()
+# instead of silently falling back to live IP geolocation (which reports
+# whatever the CI runner's/VPS's actual datacenter is, not the requested
+# flag). Assert the remark uses the EE regional-indicator emoji.
 remark="$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('remark',''))" "$reality_inbound")"
 assert_contains "Reality inbound remark uses the VPS_COUNTRY_CODE=EE flag (not a geolocated one)" \
   "$remark" "$(python3 -c 'print("\U0001F1EA\U0001F1EA")')"
@@ -170,7 +141,7 @@ stream = json.loads(ib['streamSettings']) if isinstance(ib['streamSettings'], st
 print(stream.get('realitySettings',{}).get('settings',{}).get('publicKey',''))
 " "$reality_inbound")"
 assert_nonempty "Reality nested realitySettings.settings.publicKey populated (catches missing-pbk regression)" "$nested_pbk"
-assert_eq "Nested publicKey matches reported REALITY_PUBLIC_KEY" "${OUT[REALITY_PUBLIC_KEY]}" "$nested_pbk"
+assert_eq "Nested publicKey matches REALITY_PUBLIC_KEY" "$REALITY_PUBLIC_KEY" "$nested_pbk"
 
 external_proxy="$(python3 -c "
 import json,sys
@@ -186,7 +157,7 @@ print(json.loads(sys.argv[1])['id'])
 " "$reality_inbound")"
 
 echo "--- Checking Reality Host override via real 3x-ui API ---" >&2
-hosts_json="$(api -X GET "${BASE_URL}/panel/api/hosts/byInbound/${reality_id}")"
+hosts_json="$(api_curl -X GET "${BASE_URL}/panel/api/hosts/byInbound/${reality_id}")"
 host_count="$(python3 -c "
 import json,sys
 try:
@@ -215,10 +186,10 @@ print(base64.b64decode(data).decode())
 reality_line="$(echo "$sub_decoded" | grep 'security=reality' || true)"
 assert_nonempty "subscription contains a security=reality line" "$reality_line"
 assert_not_contains "subscription Reality line has no security=tls" "$reality_line" "security=tls"
-assert_contains "subscription Reality line has non-empty pbk" "$reality_line" "pbk=${OUT[REALITY_PUBLIC_KEY]}"
+assert_contains "subscription Reality line has non-empty pbk" "$reality_line" "pbk=${REALITY_PUBLIC_KEY}"
 assert_not_contains "subscription Reality line does not use internal loopback address" "$reality_line" "@localhost:"
 assert_not_contains "subscription Reality line does not use internal loopback address" "$reality_line" "@127.0.0.1:"
-assert_contains "subscription Reality line uses the public Reality domain" "$reality_line" "${REALITY_DOMAIN}"
+assert_contains "subscription Reality line uses the public Reality domain" "$reality_line" "${REALITY_SUBDOMAIN}.${BASE_DOMAIN}"
 
 echo "--- Checking WS/XHTTP/gRPC inbounds have VLESS Encryption applied ---" >&2
 for port in "$WS_PORT" "$XHTTP_PORT" "$GRPC_PORT"; do

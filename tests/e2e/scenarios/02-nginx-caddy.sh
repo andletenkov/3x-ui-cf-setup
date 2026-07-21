@@ -120,22 +120,39 @@ else
   fail "nginx.conf does not include sites-enabled -- panel/VLESS server blocks would silently never load"
 fi
 
+# systemctl start/restart returns once the unit is "started", not once its
+# listener socket is actually bound -- polling briefly instead of a single
+# snapshot check avoids flaky false negatives/positives on slower hosts
+# (e.g. under QEMU amd64 emulation on an arm64 dev machine).
+wait_for_port_state() {
+  local port="$1" want_listening="$2" tries=10
+  while ((tries-- > 0)); do
+    if ss -tlnp 2>/dev/null | grep -q ":${port} "; then
+      [[ "$want_listening" == "yes" ]] && return 0
+    else
+      [[ "$want_listening" == "no" ]] && return 0
+    fi
+    sleep 0.5
+  done
+  return 1
+}
+
 echo "--- Starting real services ---" >&2
 write_naive_systemd_unit
 assert_true "caddy (NaiveProxy) systemd service is active" \
   systemctl is-active --quiet caddy
 
-if ss -tlnp 2>/dev/null | grep -q ":80 "; then
-  fail "something is listening on :80 -- Caddy's auto_https regressed and is binding it again"
-else
+if wait_for_port_state 80 no; then
   ok "nothing listens on :80 (Caddy's auto_https stayed disabled)"
+else
+  fail "something is listening on :80 -- Caddy's auto_https regressed and is binding it again"
 fi
 
 systemctl restart nginx
 assert_true "nginx service is active" systemctl is-active --quiet nginx
 
 echo "--- Verifying the stream{} SNI Guard actually routes by SNI ---" >&2
-if ss -tlnp 2>/dev/null | grep -q ":443 "; then
+if wait_for_port_state 443 yes; then
   ok "nginx stream{} SNI Guard is listening on :443"
 else
   fail "nothing listens on :443 after write_nginx_config -- stream{} SNI Guard did not start"

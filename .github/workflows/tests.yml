@@ -21,10 +21,10 @@ jobs:
           ignore_paths: 'tests'
 
       - name: Make scripts executable
-        run: chmod +x setup.sh setup-3x-ui.sh harden-host.sh
+        run: chmod +x setup.sh harden-host.sh
 
       - name: Bash syntax check
-        run: bash -n setup.sh && bash -n setup-3x-ui.sh && bash -n harden-host.sh
+        run: bash -n setup.sh && bash -n harden-host.sh
 
       - name: Install bats-core
         run: |
