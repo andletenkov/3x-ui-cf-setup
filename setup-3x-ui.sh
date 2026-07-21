@@ -669,6 +669,89 @@ REALITYEOF
   xui_add_inbound "$REALITY_PORT" "$tag" "${INBOUND_REMARK_REALITY:-${_flag} Reality}" "$stream_settings" "client" "none" "xtls-rprx-vision"
 }
 
+# Looks up an inbound's numeric DB id by tag (falling back to port, same
+# convention as xui_inbound_exists), needed for the Hosts API which keys off
+# id rather than tag.
+xui_get_inbound_id() {
+  local tag="$1"
+  local resp
+  resp="$(api_curl -X GET "${BASE_URL}/panel/api/inbounds/list")"
+
+  python3 -c "
+import json,sys
+tag = sys.argv[2]
+try:
+    data = json.loads(sys.argv[1])
+    obj = data.get('obj') or []
+except Exception:
+    obj = []
+try:
+    tag_port = int(tag.split('-')[1])
+except (IndexError, ValueError):
+    tag_port = None
+for ib in obj:
+    if ib.get('tag') == tag or (tag_port and ib.get('port') == tag_port):
+        print(ib['id'])
+        sys.exit(0)
+sys.exit(1)
+" "$resp" "$tag"
+}
+
+# Ensures a 3x-ui "Host" override exists for the Reality inbound, advertising
+# its public domain:443 in generated subscription/share links instead of the
+# internal loopback address:port. Uses security="same" so the link keeps
+# advertising Reality (inherits the inbound's own security) -- NEVER "tls",
+# which corrupts Reality links by forcing security=tls regardless of the
+# inbound's actual config (see github.com/MHSanaei/3x-ui/issues/5143 for the
+# analogous externalProxy-driven variant of this failure mode). Idempotent:
+# skips creation if a host already exists for this inbound.
+ensure_reality_host() {
+  [[ -n "$REALITY_SUBDOMAIN" ]] || return 0
+
+  local tag="in-${REALITY_PORT}-reality"
+  local inbound_id
+  inbound_id="$(xui_get_inbound_id "$tag")" ||
+    die "Could not resolve inbound id for '${tag}' while configuring its Host override."
+
+  local existing_resp
+  existing_resp="$(api_curl -X GET "${BASE_URL}/panel/api/hosts/byInbound/${inbound_id}")"
+  if python3 -c "
+import json,sys
+try:
+    obj = json.loads(sys.argv[1]).get('obj') or []
+except Exception:
+    obj = []
+sys.exit(0 if len(obj) > 0 else 1)
+" "$existing_resp"; then
+    echo "Host override for '${tag}' already exists, skipping creation." >&2
+    return
+  fi
+
+  echo "Creating Host override for '${tag}' (advertises ${REALITY_SUBDOMAIN}.${BASE_DOMAIN}:443 in subscription links)..." >&2
+  local body resp
+  export HOST_INBOUND_ID="$inbound_id" HOST_ADDRESS="${REALITY_SUBDOMAIN}.${BASE_DOMAIN}"
+  body="$(python3 << 'HOSTEOF'
+import json,os
+print(json.dumps({
+    'inboundIds': [int(os.environ['HOST_INBOUND_ID'])],
+    'remark': 'Reality direct',
+    'port': 443,
+    'security': 'same',
+    'hosts': [os.environ['HOST_ADDRESS']],
+}))
+HOSTEOF
+  )"
+  resp="$(api_curl -X POST "${BASE_URL}/panel/api/hosts/add" \
+    -H 'Content-Type: application/json' -d "$body")"
+  python3 -c "
+import json,sys
+try:
+    sys.exit(0 if json.loads(sys.argv[1]).get('success') else 1)
+except Exception:
+    sys.exit(1)
+" "$resp" || die "Failed to create Host override for '${tag}'. Response: ${resp}"
+}
+
 update_geo_files() {
   local geo_dir="/usr/local/x-ui/bin"
   local geoip_url="https://raw.githubusercontent.com/runetfreedom/russia-v2ray-rules-dat/release/geoip.dat"
@@ -967,6 +1050,7 @@ main() {
   ensure_grpc_inbound
   ensure_reality_keys
   ensure_reality_inbound
+  ensure_reality_host
   configure_subscription
   configure_xray_config
 
