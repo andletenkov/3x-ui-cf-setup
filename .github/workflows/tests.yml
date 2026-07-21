@@ -36,3 +36,24 @@ jobs:
 
       - name: Run tests
         run: bats tests/install.bats tests/anonymize.bats
+
+  e2e:
+    name: E2E smoke tests (real 3x-ui/nginx/Caddy, no stubs)
+    runs-on: ubuntu-latest
+    # These exercise real external systems (upstream 3x-ui installer, the
+    # nginx.org apt repo, a real Caddy/forwardproxy binary) instead of hand
+    # -written stubs, to catch drift between our assumptions and what those
+    # systems actually do -- see tests/e2e/README.md. Slower and occasionally
+    # network-flaky compared to the bats tier, so it doesn't block merges by
+    # default; treat a failure here as "go investigate", same as the bats
+    # tier treats a failure as "go fix the script".
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Make scripts executable
+        run: chmod +x tests/e2e/run.sh tests/e2e/scenarios/*
+
+      - name: Run E2E scenarios
+        run: tests/e2e/run.sh
