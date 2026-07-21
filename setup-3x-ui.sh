@@ -95,22 +95,38 @@ xui_is_installed() {
 }
 
 detect_country_flag() {
-  local country_code
-  country_code="$(curl -fsSL --max-time 5 https://ipapi.co/country/ 2>/dev/null || true)"
+  local country_code=""
 
-  if [[ ! "$country_code" =~ ^[A-Z]{2}$ ]]; then
-    country_code="$(curl -fsSL --max-time 5 https://ifconfig.co/country-iso 2>/dev/null || true)"
-  fi
-  if [[ ! "$country_code" =~ ^[A-Z]{2}$ ]]; then
-    country_code="$(curl -fsSL --max-time 5 http://ip-api.com/line/?fields=countryCode 2>/dev/null || true)"
+  # Runs as a separate subprocess from setup.sh (see install_3xui_and_inbounds),
+  # so VPS_COUNTRY_CODE must be forwarded explicitly and honored here too --
+  # otherwise it silently falls back to live IP geolocation, which reports
+  # whatever the VPS's hosting datacenter is (frequently not the same as the
+  # displayed/desired flag), regardless of what the user configured.
+  if [[ -n "${VPS_COUNTRY_CODE:-}" ]]; then
+    country_code="${VPS_COUNTRY_CODE^^}"
+    [[ "$country_code" =~ ^[A-Z]{2}$ ]] ||
+      die "VPS_COUNTRY_CODE must be a two-letter ISO country code (for example, EE)."
+  else
+    country_code="$(curl -fsSL --max-time 5 https://ipapi.co/country/ 2>/dev/null || true)"
+
+    if [[ ! "$country_code" =~ ^[A-Z]{2}$ ]]; then
+      country_code="$(curl -fsSL --max-time 5 https://ifconfig.co/country-iso 2>/dev/null || true)"
+    fi
+    if [[ ! "$country_code" =~ ^[A-Z]{2}$ ]]; then
+      country_code="$(curl -fsSL --max-time 5 http://ip-api.com/line/?fields=countryCode 2>/dev/null || true)"
+    fi
   fi
 
   if [[ "$country_code" =~ ^[A-Z]{2}$ ]]; then
     local c1 c2
     c1=$(printf '%x' $(( $(printf '%d' "'${country_code:0:1}") - 65 + 0x1F1E6 )))
     c2=$(printf '%x' $(( $(printf '%d' "'${country_code:1:1}") - 65 + 0x1F1E6 )))
+    # bash's \U printf escape only emits correct UTF-8 bytes under a UTF-8
+    # locale -- under LC_CTYPE=POSIX/C (the default on minimal VPS images and
+    # non-interactive invocations) it silently prints the literal escape
+    # text instead of the flag. Force a UTF-8 locale just for this printf.
     # shellcheck disable=SC2059
-    printf "\\U${c1}\\U${c2}"
+    LC_ALL=C.UTF-8 printf "\\U${c1}\\U${c2}"
   else
     printf '\xf0\x9f\x8c\x90'
   fi

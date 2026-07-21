@@ -1743,8 +1743,14 @@ detect_country_flag() {
     local c1 c2
     c1=$(printf '%x' $(( $(printf '%d' "'${country_code:0:1}") - 65 + 0x1F1E6 )))
     c2=$(printf '%x' $(( $(printf '%d' "'${country_code:1:1}") - 65 + 0x1F1E6 )))
+    # bash's \U printf escape only emits correct UTF-8 bytes under a UTF-8
+    # locale -- under LC_CTYPE=POSIX/C (the default on minimal VPS images,
+    # Docker containers, and non-interactive `bash <(curl ...)` invocations,
+    # i.e. exactly how this script is normally run) it silently prints the
+    # literal escape text instead of the flag. Force a UTF-8 locale just for
+    # this printf so it's correct regardless of the ambient shell's locale.
     # shellcheck disable=SC2059
-    printf "\\U${c1}\\U${c2}"
+    LC_ALL=C.UTF-8 printf "\\U${c1}\\U${c2}"
   else
     printf '🌐'
   fi
@@ -1792,6 +1798,8 @@ install_3xui_and_inbounds() {
     INBOUND_REMARK_WS="${INBOUND_REMARK_WS:-}" \
     INBOUND_REMARK_GRPC="${INBOUND_REMARK_GRPC:-}" \
     INBOUND_REMARK_XHTTP="${INBOUND_REMARK_XHTTP:-}" \
+    INBOUND_REMARK_REALITY="${INBOUND_REMARK_REALITY:-}" \
+    VPS_COUNTRY_CODE="${VPS_COUNTRY_CODE:-}" \
     XUI_VERSION="${XUI_VERSION:-}" \
     "$installer_script"
   )" || die "setup-3x-ui.sh failed."

@@ -77,7 +77,12 @@ export REALITY_SHORT_ID="deadbeef"
 export REALITY_DOMAIN="reality.e2e.test"
 export BASE_DOMAIN="e2e.test"
 export INBOUND_REMARK_WS="e2e WS" INBOUND_REMARK_GRPC="e2e gRPC" INBOUND_REMARK_XHTTP="e2e XHTTP"
-export INBOUND_REMARK_REALITY="e2e Reality"
+# Deliberately left unset (not INBOUND_REMARK_REALITY="..."): this forces
+# ensure_reality_inbound down the detect_country_flag() fallback path, so
+# the assertion below actually exercises VPS_COUNTRY_CODE forwarding across
+# the setup.sh -> setup-3x-ui.sh subprocess boundary, instead of trivially
+# passing because a remark was hardcoded end-to-end.
+export VPS_COUNTRY_CODE="EE"
 
 cd "$REPO"
 chmod +x setup-3x-ui.sh
@@ -146,6 +151,17 @@ stream = json.loads(ib['streamSettings']) if isinstance(ib['streamSettings'], st
 print(stream.get('security',''))
 " "$reality_inbound")"
 assert_eq "Reality inbound streamSettings.security" "reality" "$security"
+
+# Regression check: setup-3x-ui.sh runs as a separate subprocess from
+# setup.sh and used to carry its own out-of-sync detect_country_flag() that
+# ignored VPS_COUNTRY_CODE entirely, always live-geolocating the VPS's
+# actual IP instead (frequently reporting the wrong country for the
+# configured/desired flag). Assert the remark uses the EE regional-indicator
+# emoji (\U0001F1EA\U0001F1EA) requested via VPS_COUNTRY_CODE, not whatever
+# a live geolocation lookup would return for this CI runner's IP.
+remark="$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('remark',''))" "$reality_inbound")"
+assert_contains "Reality inbound remark uses the VPS_COUNTRY_CODE=EE flag (not a geolocated one)" \
+  "$remark" "$(python3 -c 'print("\U0001F1EA\U0001F1EA")')"
 
 nested_pbk="$(python3 -c "
 import json,sys
