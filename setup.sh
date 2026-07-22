@@ -2015,14 +2015,17 @@ xui_add_inbound() {
   # Per the 3x-ui API docs, settings/streamSettings/sniffing should be
   # nested JSON objects (preferred), not JSON-encoded strings.
   local json_body
-  export REMARK="$remark" PORT="$port" TAG="$tag" UUID="$CLIENT_UUID" EMAIL="$client_email" STREAM="$stream_settings" SUBID="$CLIENT_SUB_ID" DECRYPTION="$decryption" CLIENT_FLOW="$client_flow"
+  # Keep the panel client email separate from the script's Let's Encrypt
+  # EMAIL setting; exporting EMAIL here would corrupt saved configuration.
+  export REMARK="$remark" PORT="$port" TAG="$tag" UUID="$CLIENT_UUID" CLIENT_EMAIL="$client_email" STREAM="$stream_settings" SUBID="$CLIENT_SUB_ID" DECRYPTION="$decryption" CLIENT_FLOW="$client_flow"
   json_body="$(python3 << 'JSONEOF'
 import json,os
 client = {
     'id': os.environ['UUID'],
     # 3x-ui treats an omitted per-client enable flag as disabled.
     'enable': True,
-    'email': os.environ['EMAIL'],
+    'email': os.environ['CLIENT_EMAIL'],
+
     'subId': os.environ['SUBID'],
 }
 if os.environ.get('CLIENT_FLOW'):

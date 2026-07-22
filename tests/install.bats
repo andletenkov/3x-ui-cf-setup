@@ -1230,6 +1230,9 @@ print_summary_env() {
 
   run grep -A45 '^xui_add_inbound()' "$installer"
   [ "$status" -eq 0 ]
+  [[ "$output" == *"CLIENT_EMAIL=\"\$client_email\""* ]]
+  [[ "$output" == *"'email': os.environ['CLIENT_EMAIL']"* ]]
+  [[ "$output" != *" EMAIL=\"\$client_email\""* ]]
   [[ "$output" == *"'decryption': os.environ['DECRYPTION']"* ]]
   [[ "$output" == *"client['flow'] = os.environ['CLIENT_FLOW']"* ]]
 }
