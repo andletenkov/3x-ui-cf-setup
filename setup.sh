@@ -3411,6 +3411,19 @@ uninstall_all() {
   if command -v dpkg >/dev/null 2>&1 && dpkg -l mita >/dev/null 2>&1; then
     apt-get purge -y mita >/dev/null 2>&1 || true
   fi
+  # dpkg purge does not own these runtime-created paths -- mieru's own
+  # upstream uninstaller (tools/setup.py Uninstaller.uninstall_mita) removes
+  # them explicitly too, for the same reason.
+  rm -rf /etc/mita
+  rm -rf /var/lib/mita
+  rm -f /var/run/mita.sock
+  rm -rf /var/run/mita
+  rm -f /lib/systemd/system/mita.service
+  systemctl daemon-reload >/dev/null 2>&1 || true
+  # The deb package creates a dedicated 'mita' system user/group (for socket
+  # access, see server-install.md's 'usermod -a -G mita $USER' step).
+  userdel mita >/dev/null 2>&1 || true
+  groupdel mita >/dev/null 2>&1 || true
   rm -rf "${MITA_CONFIG_DIR:-/etc/mieru}"
   rm -rf "$(dirname -- "${MITA_VERSION_FILE:-/usr/local/mieru/.installed-version}")"
 
