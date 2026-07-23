@@ -78,9 +78,21 @@ XHTTP_PATH="/xhttp$(openssl rand -hex 4)"
 SUB_PATH="/sub$(openssl rand -hex 4)"
 CLIENT_UUID="$(python3 -c 'import uuid; print(uuid.uuid4())')"
 CLIENT_SUB_ID="$(openssl rand -hex 8)"
+INSTALL_MODE="no-cdn"
 BASE_DOMAIN="e2e.test"
 PANEL_SUBDOMAIN="panel"
 VLESS_SUBDOMAIN="vless"
+HYSTERIA_SUBDOMAIN="hy2"
+HYSTERIA_PORT=23462
+HYSTERIA_AUTH="e2e-hysteria-auth"
+HYSTERIA_OBFS_PASSWORD="e2e-salamander-password"
+CERT_DIR="/etc/e2e-selfsigned"
+mkdir -p "$CERT_DIR"
+openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+  -keyout "${CERT_DIR}/privkey.pem" -out "${CERT_DIR}/fullchain.pem" \
+  -subj "/CN=${BASE_DOMAIN}" \
+  -addext "subjectAltName=DNS:${BASE_DOMAIN},DNS:*.${BASE_DOMAIN}" \
+  2>/dev/null
 REALITY_SUBDOMAIN="reality"
 REALITY_DEST="github.com"
 REALITY_PORT=23461
@@ -97,14 +109,40 @@ install_3xui_and_inbounds || { fail "install_3xui_and_inbounds exited non-zero";
 assert_nonempty "PANEL_PATH set" "$PANEL_PATH"
 assert_nonempty "XUI_USERNAME set" "$XUI_USERNAME"
 assert_nonempty "CLIENT_UUID set" "$CLIENT_UUID"
-assert_nonempty "VLESS_ENCRYPTION_SERVER_KEY set (catches getNewmlkem768 field-name drift)" \
-  "$VLESS_ENCRYPTION_SERVER_KEY"
+# no-cdn intentionally does not generate VLESS Encryption keys: they only
+# protect CDN/reverse-proxy TLS termination and must not create a CDN inbound.
+assert_eq "no-cdn flow leaves VLESS Encryption server key empty" "" "$VLESS_ENCRYPTION_SERVER_KEY"
 assert_nonempty "REALITY_PRIVATE_KEY set" "$REALITY_PRIVATE_KEY"
 assert_nonempty "REALITY_PUBLIC_KEY set" "$REALITY_PUBLIC_KEY"
 
 # BASE_URL/api_curl are already populated by install_3xui_and_inbounds's
 # internal call to setup_api_auth -- no need to re-derive auth here.
-echo "--- Checking Reality inbound via real 3x-ui API ---" >&2
+echo "--- Checking Hysteria2 inbound via real 3x-ui API ---" >&2
+inbounds_json="$(api_curl -X GET "${BASE_URL}/panel/api/inbounds/list")"
+hysteria_inbound="$(python3 -c "
+import json,sys
+for ib in json.loads(sys.argv[1]).get('obj') or []:
+    if ib.get('port') == ${HYSTERIA_PORT}:
+        print(json.dumps(ib)); break
+" "$inbounds_json")"
+assert_nonempty "Hysteria2 inbound found on UDP port ${HYSTERIA_PORT}" "$hysteria_inbound"
+hysteria_protocol="$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('protocol',''))" "$hysteria_inbound")"
+assert_eq "Hysteria2 inbound protocol" "hysteria" "$hysteria_protocol"
+hysteria_listen="$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('listen',''))" "$hysteria_inbound")"
+assert_eq "Hysteria2 binds public UDP interfaces" "0.0.0.0" "$hysteria_listen"
+hysteria_remark="$(python3 -c "import json,sys; print(json.loads(sys.argv[1]).get('remark',''))" "$hysteria_inbound")"
+assert_contains "Hysteria2 remark uses required name" "$hysteria_remark" "Hysteria-Gecko"
+hysteria_stream="$(python3 -c "
+import json,sys
+ib=json.loads(sys.argv[1]); value=ib.get('streamSettings',{})
+print(json.dumps(json.loads(value) if isinstance(value,str) else value))
+" "$hysteria_inbound")"
+hysteria_obfs="$(python3 -c "import json,sys; s=json.loads(sys.argv[1]); print(s.get('finalmask',{}).get('udp',[{}])[0].get('settings',{}).get('password',''))" "$hysteria_stream")"
+assert_eq "Hysteria2 Salamander password persisted" "$HYSTERIA_OBFS_PASSWORD" "$hysteria_obfs"
+hysteria_ech="$(python3 -c "import json,sys; s=json.loads(sys.argv[1]); print(s.get('tlsSettings',{}).get('echServerKeys','missing'))" "$hysteria_stream")"
+assert_eq "Hysteria2 TLS ECH field is preserved" "" "$hysteria_ech"
+
+ echo "--- Checking Reality inbound via real 3x-ui API ---" >&2
 inbounds_json="$(api_curl -X GET "${BASE_URL}/panel/api/inbounds/list")"
 
 reality_inbound="$(python3 -c "
@@ -191,7 +229,7 @@ assert_not_contains "subscription Reality line does not use internal loopback ad
 assert_not_contains "subscription Reality line does not use internal loopback address" "$reality_line" "@127.0.0.1:"
 assert_contains "subscription Reality line uses the public Reality domain" "$reality_line" "${REALITY_SUBDOMAIN}.${BASE_DOMAIN}"
 
-echo "--- Checking WS/XHTTP/gRPC inbounds have VLESS Encryption applied ---" >&2
+echo "--- Checking no-cdn flow did not create CDN inbounds ---" >&2
 for port in "$WS_PORT" "$XHTTP_PORT" "$GRPC_PORT"; do
   ib="$(python3 -c "
 import json, sys
@@ -201,15 +239,7 @@ for ib in data.get('obj') or []:
         print(json.dumps(ib))
         break
 " "$inbounds_json")"
-  assert_nonempty "inbound found on port ${port}" "$ib"
-  decryption="$(python3 -c "
-import json,sys
-ib = json.loads(sys.argv[1])
-settings = json.loads(ib['settings']) if isinstance(ib['settings'], str) else ib['settings']
-print(settings.get('decryption',''))
-" "$ib")"
-  assert_nonempty "inbound ${port} has a non-empty VLESS Encryption decryption key" "$decryption"
-  assert_not_contains "inbound ${port} decryption is not literal 'none'" "$decryption" "none"
+  assert_eq "no-cdn flow has no CDN inbound on port ${port}" "" "$ib"
 done
 
 if [[ "$FAIL" -ne 0 ]]; then

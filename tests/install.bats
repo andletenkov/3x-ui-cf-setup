@@ -16,11 +16,35 @@ setup() {
 
   # shellcheck disable=SC1090
   source "$SCRIPT"
+  INSTALL_MODE="cdn"
 
   # Reset any state that individual tests might rely on being clean.
   unset SS_LISTENING_PORTS CURL_SHOULD_FAIL CURL_CF_IPV4 CURL_CF_IPV6 \
     CURL_HTTP_CODE NGINX_T_SHOULD_FAIL UFW_LOG VPS_COUNTRY_CODE \
     SYSTEMCTL_LOG SYSTEMCTL_SHOULD_FAIL NAIVE_RELEASE_JSON TAR_SHOULD_FAIL
+}
+
+# ---------------------------------------------------------------------------
+# CDN_MODE normalization
+# ---------------------------------------------------------------------------
+
+@test "normalize_cdn_mode accepts true-compatible values" {
+  run normalize_cdn_mode "YeS"
+  [ "$status" -eq 0 ]
+  [ "$output" = "cdn" ]
+
+  run normalize_cdn_mode "1"
+  [ "$status" -eq 0 ]
+  [ "$output" = "cdn" ]
+}
+
+@test "normalize_cdn_mode accepts false-compatible values and rejects invalid input" {
+  run normalize_cdn_mode "OFF"
+  [ "$status" -eq 0 ]
+  [ "$output" = "no-cdn" ]
+
+  run normalize_cdn_mode "maybe"
+  [ "$status" -eq 1 ]
 }
 
 # ---------------------------------------------------------------------------
@@ -123,6 +147,7 @@ setup() {
 # ---------------------------------------------------------------------------
 
 valid_inputs() {
+  INSTALL_MODE="cdn"
   BASE_DOMAIN="example.com"
   PANEL_SUBDOMAIN="admin"
   VLESS_SUBDOMAIN="vpn"
@@ -188,6 +213,49 @@ valid_inputs() {
   [ "$status" -eq 0 ]
   [[ "$output" == *"allowed: 443/tcp from anywhere"* ]]
   [[ "$output" != *"Cloudflare IP ranges only"* ]]
+}
+
+@test "validate_inputs rejects direct inbounds in cdn mode" {
+  valid_inputs
+  REALITY_SUBDOMAIN="reality"
+  REALITY_DEST="github.com"
+  REALITY_PORT="20000"
+  run validate_inputs
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"INSTALL_MODE=cdn cannot enable direct inbounds"* ]]
+}
+
+@test "validate_inputs accepts a no-cdn Reality-only configuration" {
+  valid_inputs
+  INSTALL_MODE="no-cdn"
+  REALITY_SUBDOMAIN="reality"
+  REALITY_DEST="github.com"
+  REALITY_PORT="20000"
+  run validate_inputs
+  [ "$status" -eq 0 ]
+}
+
+@test "validate_inputs rejects no-cdn mode without a direct inbound" {
+  valid_inputs
+  INSTALL_MODE="no-cdn"
+  REALITY_SUBDOMAIN=""
+  NAIVE_SUBDOMAIN=""
+  run validate_inputs
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"requires at least one direct inbound"* ]]
+}
+
+@test "validate_inputs accepts a no-cdn Hysteria2-only configuration" {
+  valid_inputs
+  INSTALL_MODE="no-cdn"
+  HYSTERIA_SUBDOMAIN="hy2"
+  HYSTERIA_PORT="443"
+  HYSTERIA_AUTH="test-auth"
+  HYSTERIA_OBFS_PASSWORD="test-obfs"
+  REALITY_SUBDOMAIN=""
+  NAIVE_SUBDOMAIN=""
+  run validate_inputs
+  [ "$status" -eq 0 ]
 }
 
 @test "validate_inputs rejects invalid base domain" {
@@ -603,6 +671,20 @@ nginx_config_env() {
   grep -q "location /api.v1.SyncService" "$NGINX_SITE"
   grep -q "server_name admin.example.com;" "$NGINX_SITE"
   grep -q "server_name vpn.example.com;" "$NGINX_SITE"
+}
+
+@test "write_nginx_config omits CDN VLESS proxy locations in no-cdn mode" {
+  nginx_config_env
+  INSTALL_MODE="no-cdn"
+
+  run write_nginx_config
+  [ "$status" -eq 0 ]
+
+  ! grep -q "server_name vpn.example.com;" "$NGINX_SITE"
+  ! grep -q "127.0.0.1:10001" "$NGINX_SITE"
+  ! grep -q "127.0.0.1:10002" "$NGINX_SITE"
+  ! grep -q "127.0.0.1:10003" "$NGINX_SITE"
+  grep -q "server_name admin.example.com;" "$NGINX_SITE"
 }
 
 @test "write_nginx_config preserves the default site for uninstall" {
@@ -1271,6 +1353,22 @@ print_summary_env() {
   [ -n "$key_line" ]
   [ -n "$inbound_line" ]
   [ "$key_line" -lt "$inbound_line" ]
+}
+
+# ---------------------------------------------------------------------------
+# Hysteria2 -- direct UDP/QUIC inbound, static payload contract
+# ---------------------------------------------------------------------------
+
+@test "ensure_hysteria_inbound uses public UDP, TLS, Salamander, and the required remark" {
+  local installer="${BATS_TEST_DIRNAME}/../setup.sh"
+
+  run grep -A55 '^ensure_hysteria_inbound()' "$installer"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"'listen': '0.0.0.0'"* ]]
+  [[ "$output" == *"'protocol': 'hysteria'"* ]]
+  [[ "$output" == *"'type': 'salamander'"* ]]
+  [[ "$output" == *"Hysteria-Gecko"* ]]
+  [[ "$output" == *"'echServerKeys': ''"* ]]
 }
 
 # ---------------------------------------------------------------------------

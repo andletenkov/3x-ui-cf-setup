@@ -56,6 +56,7 @@ source ./setup.sh
 # MUST happen AFTER sourcing: setup.sh unconditionally resets these to their
 # defaults ('' for most) at top-level scope, so setting them before sourcing
 # would just get clobbered.
+INSTALL_MODE="cdn"
 BASE_DOMAIN="e2e.test"
 PANEL_SUBDOMAIN="admin"
 VLESS_SUBDOMAIN="lab"
@@ -64,8 +65,9 @@ PANEL_PATH="/panel$(openssl rand -hex 4)"
 PANEL_PORT=23456
 SUB_PORT=23460; WS_PORT=23457; GRPC_PORT=23458; XHTTP_PORT=23459
 WS_PATH="/ws1"; GRPC_SERVICE="grpc1"; XHTTP_PATH="/xhttp1"; SUB_PATH="/sub1"
-REALITY_SUBDOMAIN="reality"; REALITY_DEST="github.com"; REALITY_PORT=23461
-NAIVE_SUBDOMAIN="naive"; NAIVE_PORT=23462
+# Direct transports are intentionally excluded from the CDN flow.
+REALITY_SUBDOMAIN=""; REALITY_DEST=""; REALITY_PORT=""
+NAIVE_SUBDOMAIN=""; NAIVE_PORT=""
 NAIVE_USERNAME="e2euser"; NAIVE_PASSWORD="e2epass$(openssl rand -hex 4)"
 NGINX_CDN_PORT=23463; NGINX_DECOY_PORT=23464
 
@@ -85,31 +87,7 @@ openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
 echo "--- Installing real nginx from nginx.org repo ---" >&2
 install_packages
 
-echo "--- Installing real Caddy/forwardproxy binary ---" >&2
-install_naiveproxy
-
-if [[ -x "$NAIVE_BIN" ]]; then
-  binary_basename="$(basename "$NAIVE_BIN")"
-  assert_eq "installed NaiveProxy binary is named 'caddy' (not the client-only 'naive')" \
-    "caddy" "$binary_basename"
-else
-  fail "NAIVE_BIN (${NAIVE_BIN}) is not executable after install_naiveproxy"
-fi
-
-echo "--- Writing and validating Caddyfile ---" >&2
-write_caddyfile
-assert_true "caddy validate accepts the generated Caddyfile" \
-  "$NAIVE_BIN" validate --config "$CADDYFILE"
-
-if grep -q "auto_https off" "$CADDYFILE"; then
-  ok "Caddyfile disables auto_https (avoids the port-80 bind conflict)"
-else
-  fail "Caddyfile is missing 'auto_https off' -- Caddy will try to bind :80"
-fi
-
 echo "--- Writing nginx config (panel/VLESS server blocks + stream SNI Guard) ---" >&2
-ensure_nginx_stream_context
-write_nginx_stream_config
 write_nginx_config
 
 assert_true "'nginx -t' accepts the generated config" nginx -t
@@ -138,36 +116,36 @@ wait_for_port_state() {
 }
 
 echo "--- Starting real services ---" >&2
-write_naive_systemd_unit
-assert_true "caddy (NaiveProxy) systemd service is active" \
-  systemctl is-active --quiet caddy
-
-if wait_for_port_state 80 no; then
-  ok "nothing listens on :80 (Caddy's auto_https stayed disabled)"
-else
-  fail "something is listening on :80 -- Caddy's auto_https regressed and is binding it again"
-fi
-
 systemctl restart nginx
 assert_true "nginx service is active" systemctl is-active --quiet nginx
 
-echo "--- Verifying the stream{} SNI Guard actually routes by SNI ---" >&2
+echo "--- Verifying the CDN Nginx listener ---" >&2
 if wait_for_port_state 443 yes; then
-  ok "nginx stream{} SNI Guard is listening on :443"
+  ok "nginx is listening directly on :443 for CDN inbounds"
 else
-  fail "nothing listens on :443 after write_nginx_config -- stream{} SNI Guard did not start"
+  fail "nothing listens on :443 after write_nginx_config"
 fi
 
-# An unrecognized SNI should hit the decoy vhost (a real nginx server block
-# behind the SNI Guard) and get the real cert back over a full TLS
-# handshake -- proving ssl_preread + proxy_pass actually route traffic, not
-# just that the config happens to parse.
-
-if timeout 5 openssl s_client -connect 127.0.0.1:443 -servername unknown.invalid </dev/null 2>&1 \
+if timeout 5 openssl s_client -connect 127.0.0.1:443 -servername "${VLESS_SUBDOMAIN}.${BASE_DOMAIN}" </dev/null 2>&1 \
     | grep -q "CN.*=.*${BASE_DOMAIN}"; then
-  ok "unrecognized SNI routes to the decoy vhost (serves the real cert)"
+  ok "CDN VLESS hostname completes a TLS handshake"
 else
-  fail "unrecognized SNI did not reach the decoy vhost as expected"
+  fail "CDN VLESS hostname did not complete a TLS handshake"
+fi
+
+echo "--- Rendering the no-cdn Nginx flow ---" >&2
+INSTALL_MODE="no-cdn"
+REALITY_SUBDOMAIN="reality"; REALITY_DEST="github.com"; REALITY_PORT=23461
+NGINX_CDN_PORT=23463; NGINX_DECOY_PORT=23464
+write_nginx_config
+assert_true "no-cdn nginx configuration validates" nginx -t
+if grep -q "server_name ${VLESS_SUBDOMAIN}.${BASE_DOMAIN};" "$NGINX_SITE" || \
+   grep -q "127.0.0.1:${WS_PORT}" "$NGINX_SITE" || \
+   grep -q "127.0.0.1:${GRPC_PORT}" "$NGINX_SITE" || \
+   grep -q "127.0.0.1:${XHTTP_PORT}" "$NGINX_SITE"; then
+  fail "no-cdn Nginx configuration contains a CDN VLESS proxy"
+else
+  ok "no-cdn Nginx configuration contains no CDN VLESS proxy"
 fi
 
 if [[ "$FAIL" -ne 0 ]]; then

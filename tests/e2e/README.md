@@ -50,13 +50,26 @@ the actual Caddy binary, the actual 3x-ui installer/API) is real.
 
 ## Running locally
 
+This tier is **manual and local-only** -- it is deliberately not part of CI
+(see `.github/workflows/tests.yml`). It's slow (real package installs, a
+systemd boot, real binary downloads), occasionally network-flaky, and needs
+`--privileged` Docker support shared CI runners don't reliably provide.
+Run it yourself before merging any change that touches transport/inbound
+behavior.
+
 Requires Docker with privileged-container support (systemd needs real
 cgroups):
 
 ```bash
-tests/e2e/run.sh                    # run every scenario
-tests/e2e/run.sh 01-xui-reality.sh  # run just one
+tests/e2e/run.sh                          # run every scenario
+tests/e2e/run.sh 01-xui-reality.sh        # run just one
+tests/e2e/run.sh 03-transport-connectivity.sh
 ```
+
+On an Apple Silicon/arm64 host, this always runs under QEMU amd64 emulation
+(see the caveat below) -- expect it to be noticeably slower than on a native
+amd64 machine, and treat a failure that reproduces only there as suspect
+until confirmed (or not) natively.
 
 ## Adding a new assertion
 

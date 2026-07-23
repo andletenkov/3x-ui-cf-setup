@@ -11,7 +11,10 @@ Automated deployment of a 3x-ui/Xray server in one of two **mutually exclusive**
 network modes. It installs and configures 3x-ui, Nginx, wildcard TLS, UFW,
 subscriptions, routing, and optional host hardening. The mode boundary prevents
 CDN-fronted and direct transports from sharing a VPS, which could otherwise
-make the CDN origin's IP discoverable and weaken its camouflage.
+make the CDN origin's IP discoverable and weaken its camouflage. `no-cdn` mode
+offers four independent direct-connection transports (Reality, NaiveProxy,
+Hysteria2, mieru) that can be mixed freely with each other, since none of
+them depend on a CDN in front.
 
 ## What it sets up
 
@@ -19,6 +22,8 @@ make the CDN origin's IP discoverable and weaken its camouflage.
 flowchart LR
     Client --> CF[Cloudflare proxy]
     Client -.direct, optional.-> Stream
+    Client -.direct UDP/QUIC, optional.-> Hysteria2[Hysteria2]
+    Client -.direct, optional.-> Mieru[mieru / mita]
     CF -->|HTTPS TCP/443| Stream[Nginx stream SNI Guard]
 
     subgraph VPS
@@ -26,19 +31,23 @@ flowchart LR
       Stream --> NginxHTTP[Nginx HTTP loopback]
       Stream -.optional.-> Caddy[NaiveProxy / Caddy]
       Stream -.optional.-> XrayReality[Xray VLESS+Reality]
-      Client -.direct, optional.-> Mieru[mieru / mita]
       Stream -.unmatched SNI.-> Decoy[Decoy vhost]
       NginxHTTP --> Panel[3x-ui panel]
       NginxHTTP --> WS[VLESS WebSocket]
       NginxHTTP --> GRPC[VLESS gRPC]
       NginxHTTP --> XHTTP[VLESS XHTTP]
+      Hysteria2[Hysteria2]
+      Mieru[mieru / mita]
     end
 ```
 
 This diagram shows the two alternatives, not a combined deployment. In `cdn`
 mode only the Cloudflare → Nginx → WS/gRPC/XHTTP branch is created. In
-`no-cdn` mode only the direct Reality/Naive branches (plus panel/subscription)
-are created; the stream SNI Guard appears when direct traffic shares port 443.
+`no-cdn` mode only the direct Reality/NaiveProxy/Hysteria2/mieru branches
+(plus panel/subscription) are created; the stream SNI Guard appears only when
+Reality or NaiveProxy share port 443. Hysteria2 (UDP/QUIC) and mieru (its own
+fixed port set) never touch Nginx or the stream Guard at all -- they're
+reached directly.
 
 | Component | Configuration |
 |---|---|
@@ -48,10 +57,11 @@ are created; the stream SNI Guard appears when direct traffic shares port 443.
 | VLESS/XHTTP | Loopback Xray listener using `packet-up`, proxied with Nginx `grpc_pass`, VLESS Encryption + XTLS-Vision |
 | VLESS/Reality *(`no-cdn`)* | Direct connection, donor-site impersonation, no VLESS Encryption needed |
 | NaiveProxy *(`no-cdn`)* | Direct connection, Caddy + forwardproxy, reuses the wildcard cert |
-| mieru *(`no-cdn`)* | Direct connection, mita server, own username/password auth, no TLS/SNI/cert |
+| Hysteria2 *(`no-cdn`)* | Direct UDP/QUIC, Salamander obfuscation, reuses the wildcard cert for its own TLS |
+| mieru *(`no-cdn`)* | Direct connection, mita server, own username/password auth, no TLS/SNI/cert, fixed "boring" port set |
 | Subscription | Loopback listener proxied through the panel hostname |
-| TLS | Let's Encrypt wildcard certificate via Cloudflare DNS-01, shared by the CDN inbounds and NaiveProxy |
-| Origin firewall | TCP/443 open to everyone -- direct-connection features (Reality, NaiveProxy) need it; the stream SNI Guard, not the firewall, is what keeps random probes off the real inbounds |
+| TLS | Let's Encrypt wildcard certificate via Cloudflare DNS-01, shared by the CDN inbounds, NaiveProxy, and Hysteria2 |
+| Origin firewall | TCP/443 open to everyone -- direct-connection features (Reality, NaiveProxy) need it; the stream SNI Guard, not the firewall, is what keeps random probes off the real inbounds. Hysteria2 and mieru get their own explicit UFW allow rules on their own ports |
 | Routing | Direct traffic plus WARP routing for configured Russian/OpenAI rules; private and BitTorrent traffic blocked |
 
 ## Scripts
@@ -71,10 +81,12 @@ Use `setup.sh` for normal operation. `harden-host.sh` can be run directly only f
 - Choose **one** mode before installing; never place CDN and direct transports
   on the same VPS with this installer.
 - In `cdn` mode, the panel and VLESS hostname must remain **orange-cloud proxied**.
-- In `no-cdn` mode, Reality and NaiveProxy hostnames must be **DNS-only (grey
-  cloud)**. They connect directly to the VPS and cannot pass through Cloudflare.
+- In `no-cdn` mode, any enabled Reality/NaiveProxy/Hysteria2/mieru hostname
+  must be **DNS-only (grey cloud)**. They connect directly to the VPS and
+  cannot pass through Cloudflare.
 - TCP/443 is open to the internet. In `no-cdn` mode the Nginx stream SNI Guard
-  routes direct traffic by SNI and sends unmatched SNI to a decoy.
+  routes Reality/NaiveProxy traffic by SNI and sends unmatched SNI to a decoy;
+  Hysteria2 (UDP) and mieru (its own fixed ports) bypass Nginx entirely.
 
 ## Install
 
@@ -95,8 +107,8 @@ run. 3x-ui creates panel credentials and its secret panel path itself.
 
 | `CDN_MODE` | Created inbounds | DNS/proxy requirement |
 |---|---|---|
-| true-compatible | VLESS WebSocket, gRPC, XHTTP/TLS | VLESS hostname is orange-cloud proxied; no Reality or NaiveProxy is allowed |
-| false-compatible | Hysteria2, VLESS TCP+Reality, and/or NaiveProxy | Direct hostnames are DNS-only; at least one direct inbound is required |
+| true-compatible | VLESS WebSocket, gRPC, XHTTP/TLS | VLESS hostname is orange-cloud proxied; no Reality, NaiveProxy, Hysteria2, or mieru is allowed |
+| false-compatible | Hysteria2, VLESS TCP+Reality, NaiveProxy, and/or mieru | Direct hostnames are DNS-only; at least one direct inbound is required |
 
 `xhttp-reality` is reserved for a future `no-cdn` release. Hysteria2 is a
 native direct UDP/QUIC inbound and is created when its subdomain is supplied. A `cdn` run clears any saved Reality/Naive settings, so
@@ -384,10 +396,20 @@ sudo DNS_RESOLVERS='9.9.9.9#dns.quad9.net 149.112.112.112#dns.quad9.net' \
 
 ## Test
 
+Two tiers -- see [`tests/README.md`](tests/README.md) for the full guide:
+
 ```bash
+# Fast unit tests (stubs, no root/network needed) -- run on every push/PR in CI
 brew install bats-core   # or: apt install bats
 chmod +x tests/stubs/*
 bats tests/install.bats tests/anonymize.bats
+
+# Real E2E smoke tests (real 3x-ui/nginx/Caddy/xray-core/hysteria/mieru in
+# Docker) -- manual/local only, NOT run in CI; see tests/e2e/README.md
+tests/e2e/run.sh
 ```
 
-CI runs ShellCheck and the Bats suite on pushes and pull requests.
+CI runs ShellCheck and the Bats suite on pushes and pull requests. The E2E
+tier is intentionally excluded from CI (slow, real-network-dependent, needs
+`--privileged` Docker) -- run it yourself before merging any change that
+touches transport/inbound behavior.
