@@ -199,11 +199,21 @@ generates a username/password, and applies a server configuration via
 upstream [server installation guide](https://github.com/enfein/mieru/blob/main/docs/server-install.md).
 
 Unlike Reality and NaiveProxy, mieru has no TLS/SNI layer at all -- there is
-no certificate to issue and nothing for the Nginx stream SNI Guard to route,
-so it gets its own dedicated public port (TCP or UDP, chosen at setup time,
-default UDP) rather than sharing 443. Its subdomain is a DNS-only record used
-solely as a friendly hostname for clients; mieru authenticates purely via the
-generated username/password, not the hostname itself. Mind the mieru project's
+no certificate to issue and nothing for the Nginx stream SNI Guard to route.
+Rather than one random ephemeral port (itself a probe-worthy anomaly with no
+TLS/SNI to explain why it's open), it listens on a fixed, deliberately
+unremarkable set of widely-recognized-as-normal ports: `53/UDP` (DNS),
+`853/TCP` (DNS-over-TLS), `993/TCP` (IMAPS), `8443/TCP` (common alt-HTTPS).
+All four share the same `mita apply config` server config and the same
+generated user; a client just picks whichever one works. This candidate list
+is intentionally fixed, not user-configurable -- the point is specific,
+plausible port numbers, not a random or open-ended set. If a candidate
+collides with another port this script already reserved, or is already in
+use on the host, it's skipped (with a warning) rather than failing the whole
+feature, as long as at least one candidate survives. Its subdomain is a
+DNS-only record used solely as a friendly hostname for clients; mieru
+authenticates purely via the generated username/password, not the hostname
+itself. Mind the mieru project's
 own [security guide](https://github.com/enfein/mieru/blob/main/docs/security.md)
 (e.g. avoiding domestic OSes/browsers) and
 [maintenance guide](https://github.com/enfein/mieru/blob/main/docs/operation.md#maintenance--troubleshooting)
@@ -265,8 +275,7 @@ credentials sees an ordinary decoy webpage (the same content as
 | `NAIVE_SUBDOMAIN` | blank (disabled) | Optional; must be **DNS-only**, not orange-cloud |
 | `HYSTERIA_SUBDOMAIN` | blank (disabled) | Optional Hysteria2 hostname; must be **DNS-only** |
 | `MIERU_SUBDOMAIN` | blank (disabled) | Optional mieru hostname; must be **DNS-only**; used only as a client-facing label, not for routing |
-| `MIERU_PORT` | random free port | Public TCP or UDP port; not shared with 443 |
-| `MIERU_PROTOCOL` | `UDP` | `TCP` or `UDP`, per mieru's [protocol guide](https://github.com/enfein/mieru/blob/main/docs/protocol.md) |
+| `MIERU_PORTS` | computed once from a fixed candidate list (`53/UDP`, `853/TCP`, `993/TCP`, `8443/TCP`) | Comma-separated `port:protocol` bindings actually configured; not directly user-editable, but candidates already in use or colliding with another reserved port are skipped automatically |
 | `MIERU_USERNAME`, `MIERU_PASSWORD` | generated once | Saved and reused on subsequent runs |
 | `HYSTERIA_PORT` | `443`/UDP | Public UDP listener; shares the number, not the protocol, with Nginx TCP/443 |
 | `HYSTERIA_AUTH` | generated once | Hysteria2 client authentication secret |

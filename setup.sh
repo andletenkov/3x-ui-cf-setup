@@ -65,11 +65,19 @@ HYSTERIA_OBFS_PASSWORD=""
 # Optional mieru deployment (mita server, direct connection, no CDN). Blank
 # MIERU_SUBDOMAIN disables the feature entirely. Unlike Reality/NaiveProxy,
 # mieru does not use TLS/SNI at all -- it authenticates via username/password
-# and encrypts with its own AEAD scheme, so it needs no certificate and is
-# reached on its own dedicated public port (not shared via the SNI Guard).
+# and encrypts with its own AEAD scheme, so it needs no certificate.
+#
+# Rather than one random ephemeral port (which is itself a probe-worthy
+# anomaly on a host with no TLS/SNI to explain why it's open), mieru gets
+# several deliberately unremarkable, widely-recognized-as-normal ports --
+# this fixed candidate list is NOT user-configurable by design; the whole
+# point is specific, plausible port numbers, not a random or open-ended set.
+# Each entry is its own mita portBindings entry sharing the same user.
+MIERU_CANDIDATE_PORTS=("53:UDP" "853:TCP" "993:TCP" "8443:TCP")
 MIERU_SUBDOMAIN=""
-MIERU_PORT=""
-MIERU_PROTOCOL=""
+# Comma-separated "port:protocol" list actually configured on this host --
+# a subset of MIERU_CANDIDATE_PORTS with any host-local collisions removed.
+MIERU_PORTS=""
 MIERU_USERNAME=""
 MIERU_PASSWORD=""
 
@@ -204,8 +212,7 @@ HYSTERIA_PORT="${HYSTERIA_PORT}"
 HYSTERIA_AUTH="${HYSTERIA_AUTH}"
 HYSTERIA_OBFS_PASSWORD="${HYSTERIA_OBFS_PASSWORD}"
 MIERU_SUBDOMAIN="${MIERU_SUBDOMAIN}"
-MIERU_PORT="${MIERU_PORT}"
-MIERU_PROTOCOL="${MIERU_PROTOCOL}"
+MIERU_PORTS="${MIERU_PORTS}"
 MIERU_USERNAME="${MIERU_USERNAME}"
 MIERU_PASSWORD="${MIERU_PASSWORD}"
 CLOUDFLARE_API_TOKEN="${CLOUDFLARE_API_TOKEN:-}"
@@ -356,6 +363,57 @@ random_free_port() {
       return
     fi
   done
+}
+
+# Filters MIERU_CANDIDATE_PORTS (fixed "port:protocol" entries) down to the
+# subset that doesn't collide with any other reserved port on this host and
+# isn't already listening under that protocol. Prints a comma-separated
+# survivors list to stdout; warns (but doesn't fail) on skipped candidates,
+# since losing one boring port still leaves the others usable.
+select_mieru_ports() {
+  # Accepts any number of other reserved ports to exclude, same convention
+  # as random_free_port.
+  local candidate port proto other collision survivors=()
+
+  for candidate in "${MIERU_CANDIDATE_PORTS[@]}"; do
+    port="${candidate%%:*}"
+    proto="${candidate#*:}"
+
+    collision=false
+    for other in "$@"; do
+      [[ -n "$other" && "$port" == "$other" ]] && { collision=true; break; }
+    done
+
+    if [[ "$collision" == true ]]; then
+      echo "WARNING: mieru candidate port ${port} collides with another reserved port on this host; skipping it." >&2
+      continue
+    fi
+
+    if [[ "$proto" == "UDP" ]] && port_is_udp_listening "$port"; then
+      echo "WARNING: mieru candidate port ${port}/udp is already in use on this host; skipping it." >&2
+      continue
+    fi
+    if [[ "$proto" == "TCP" ]] && port_is_listening "$port"; then
+      echo "WARNING: mieru candidate port ${port}/tcp is already in use on this host; skipping it." >&2
+      continue
+    fi
+
+    survivors+=("${port}:${proto}")
+  done
+
+  local IFS=','
+  printf '%s\n' "${survivors[*]:-}"
+}
+
+# Formats a "port:proto,port:proto" MIERU_PORTS string as "port/proto, ..."
+# for human-readable display in prompts/summaries.
+format_mieru_ports() {
+  local list="$1" entry result=""
+  for entry in ${list//,/ }; do
+    [[ -z "$result" ]] || result+=", "
+    result+="${entry%%:*}/$(printf '%s' "${entry#*:}" | tr '[:upper:]' '[:lower:]')"
+  done
+  printf '%s\n' "$result"
 }
 
 normalize_panel_path() {
@@ -552,19 +610,28 @@ validate_inputs() {
     [[ -z "$HYSTERIA_SUBDOMAIN" || "$MIERU_SUBDOMAIN" != "$HYSTERIA_SUBDOMAIN" ]] ||
       die "mieru subdomain must be different from the Hysteria2 subdomain."
 
-    [[ "$MIERU_PROTOCOL" == "TCP" || "$MIERU_PROTOCOL" == "UDP" ]] ||
-      die "MIERU_PROTOCOL must be TCP or UDP."
+    [[ -n "$MIERU_PORTS" ]] ||
+      die "MIERU_SUBDOMAIN is set but MIERU_PORTS is empty -- every candidate port collided with another reserved port on this host."
 
-    validate_port "mieru port" "$MIERU_PORT"
+    local mieru_binding mieru_port mieru_proto
+    for mieru_binding in ${MIERU_PORTS//,/ }; do
+      mieru_port="${mieru_binding%%:*}"
+      mieru_proto="${mieru_binding#*:}"
 
-    local mieru_other_port
-    for mieru_other_port in "$SUB_PORT" "$WS_PORT" "$GRPC_PORT" "$XHTTP_PORT" "$PANEL_PORT" "${REALITY_PORT:-}" "${NAIVE_PORT:-}" "${HYSTERIA_PORT:-}"; do
-      [[ -z "$mieru_other_port" || "$MIERU_PORT" != "$mieru_other_port" ]] ||
-        die "mieru port must be different from every other internal port."
+      validate_port "mieru port ${mieru_port}" "$mieru_port"
+
+      [[ "$mieru_proto" == "TCP" || "$mieru_proto" == "UDP" ]] ||
+        die "mieru port ${mieru_port} has an invalid protocol '${mieru_proto}' (expected TCP or UDP)."
+
+      [[ "$mieru_port" != "443" ]] ||
+        die "mieru port cannot be 443 (reserved for the public HTTPS listener)."
+
+      local mieru_other_port
+      for mieru_other_port in "$SUB_PORT" "$WS_PORT" "$GRPC_PORT" "$XHTTP_PORT" "$PANEL_PORT" "${REALITY_PORT:-}" "${NAIVE_PORT:-}" "${HYSTERIA_PORT:-}"; do
+        [[ -z "$mieru_other_port" || "$mieru_port" != "$mieru_other_port" ]] ||
+          die "mieru port ${mieru_port} must be different from every other internal port."
+      done
     done
-
-    [[ "$MIERU_PORT" != "443" ]] ||
-      die "mieru port cannot be 443 (reserved for the public HTTPS listener)."
   fi
 
   # NaiveProxy is entirely optional -- a blank NAIVE_SUBDOMAIN disables it.
@@ -801,26 +868,24 @@ collect_input() {
   echo
   echo "Optional: mieru is another direct connection (no CDN -- use a DNS-only/"
   echo "grey-cloud record). Unlike Reality/NaiveProxy it uses no TLS/SNI at all --"
-  echo "it authenticates with a username/password and gets its own dedicated"
-  echo "public port (TCP or UDP), not shared with 443. Leave the subdomain blank"
-  echo "to skip it."
+  echo "it authenticates with a username/password. Instead of one random"
+  echo "ephemeral port (itself a probe-worthy anomaly with no TLS to explain it),"
+  echo "it listens on several fixed, deliberately unremarkable ports: ${MIERU_CANDIDATE_PORTS[*]}."
+  echo "Leave the subdomain blank to skip it."
   echo
   prompt_optional MIERU_SUBDOMAIN "mieru subdomain (DNS-only, e.g. mieru)" "$MIERU_SUBDOMAIN"
 
   if [[ -n "$MIERU_SUBDOMAIN" ]]; then
-    MIERU_PORT="${MIERU_PORT:-$(random_free_port "443" "$SUB_PORT" "$WS_PORT" "$GRPC_PORT" "$XHTTP_PORT" "$PANEL_PORT" "${REALITY_PORT:-}" "${NAIVE_PORT:-}" "${HYSTERIA_PORT:-}")}"
-    validate_port "mieru port" "$MIERU_PORT"
-
-    if port_is_listening "$MIERU_PORT" || port_is_udp_listening "$MIERU_PORT"; then
-      echo "WARNING: port ${MIERU_PORT} is already in use by another process on this host." >&2
+    if [[ -z "$MIERU_PORTS" ]]; then
+      MIERU_PORTS="$(select_mieru_ports "443" "$SUB_PORT" "$WS_PORT" "$GRPC_PORT" "$XHTTP_PORT" "$PANEL_PORT" "${REALITY_PORT:-}" "${NAIVE_PORT:-}" "${HYSTERIA_PORT:-}")"
+      [[ -n "$MIERU_PORTS" ]] ||
+        die "Every mieru candidate port (${MIERU_CANDIDATE_PORTS[*]}) collided with another reserved port or was already in use on this host."
     fi
 
-    MIERU_PROTOCOL="${MIERU_PROTOCOL:-UDP}"
     [[ -n "$MIERU_USERNAME" ]] || MIERU_USERNAME="user_$(openssl rand -hex 4)"
     [[ -n "$MIERU_PASSWORD" ]] || MIERU_PASSWORD="$(openssl rand -hex 16)"
   else
-    MIERU_PORT=""
-    MIERU_PROTOCOL=""
+    MIERU_PORTS=""
     MIERU_USERNAME=""
     MIERU_PASSWORD=""
   fi
@@ -852,8 +917,7 @@ collect_input() {
     HYSTERIA_AUTH=""
     HYSTERIA_OBFS_PASSWORD=""
     MIERU_SUBDOMAIN=""
-    MIERU_PORT=""
-    MIERU_PROTOCOL=""
+    MIERU_PORTS=""
     MIERU_USERNAME=""
     MIERU_PASSWORD=""
     NGINX_CDN_PORT=""
@@ -924,7 +988,7 @@ confirm_configuration() {
   if [[ -n "$MIERU_SUBDOMAIN" ]]; then
     echo "mieru (direct connection, no CDN):"
     echo "  domain: ${MIERU_SUBDOMAIN}.${BASE_DOMAIN} (DNS-only/grey-cloud -- do NOT enable the Cloudflare proxy for this record)"
-    echo "  public/client port: ${MIERU_PORT}/${MIERU_PROTOCOL}"
+    echo "  public/client ports: $(format_mieru_ports "$MIERU_PORTS")"
     echo "  username: ${MIERU_USERNAME}"
     echo
   fi
@@ -936,7 +1000,7 @@ confirm_configuration() {
   else
     echo "  denied: public 80/tcp, ${PANEL_PORT}/tcp, ${SUB_PORT}/tcp${REALITY_PORT:+, ${REALITY_PORT}/tcp}${NAIVE_PORT:+, ${NAIVE_PORT}/tcp}"
   fi
-  [[ -z "${MIERU_PORT:-}" ]] || echo "  allowed: ${MIERU_PORT}/${MIERU_PROTOCOL} from anywhere (mieru)"
+  [[ -z "${MIERU_PORTS:-}" ]] || echo "  allowed: $(format_mieru_ports "$MIERU_PORTS") from anywhere (mieru)"
   echo
 
   read -r -p "Continue? [y/N]: " answer
@@ -1298,13 +1362,19 @@ write_mieru_config() {
   local tmp_config
   tmp_config="$(make_tmp_file)"
 
+  local mieru_binding mieru_port mieru_proto
+  local port_bindings_json=""
+  for mieru_binding in ${MIERU_PORTS//,/ }; do
+    mieru_port="${mieru_binding%%:*}"
+    mieru_proto="${mieru_binding#*:}"
+    [[ -z "$port_bindings_json" ]] || port_bindings_json+=$',\n        '
+    port_bindings_json+="{ \"port\": ${mieru_port}, \"protocol\": \"${mieru_proto}\" }"
+  done
+
   cat > "$tmp_config" <<EOF
 {
     "portBindings": [
-        {
-            "port": ${MIERU_PORT},
-            "protocol": "${MIERU_PROTOCOL}"
-        }
+        ${port_bindings_json}
     ],
     "users": [
         {
@@ -1940,7 +2010,7 @@ configure_ufw() {
   local prev_xhttp_port=""
   local prev_reality_port=""
   local prev_naive_port=""
-  local prev_mieru_port=""
+  local prev_mieru_ports=""
   local prev_nginx_cdn_port=""
   local prev_nginx_decoy_port=""
 
@@ -1954,16 +2024,25 @@ configure_ufw() {
     prev_xhttp_port="${STATE_XHTTP_PORT:-}"
     prev_reality_port="${STATE_REALITY_PORT:-}"
     prev_naive_port="${STATE_NAIVE_PORT:-}"
-    prev_mieru_port="${STATE_MIERU_PORT:-}"
+    prev_mieru_ports="${STATE_MIERU_PORTS:-}"
     prev_nginx_cdn_port="${STATE_NGINX_CDN_PORT:-}"
     prev_nginx_decoy_port="${STATE_NGINX_DECOY_PORT:-}"
   fi
 
-  # Remove stale deny/allow rules left over from a previous run with different
-  # ports. mieru's own port is allowed (not denied), so clean up both forms.
-  if [[ -n "$prev_mieru_port" ]] && [[ "$prev_mieru_port" != "${MIERU_PORT:-}" ]]; then
-    ufw delete allow "${prev_mieru_port}/tcp" || true
-    ufw delete allow "${prev_mieru_port}/udp" || true
+  # Remove stale allow rules left over from a previous run's mieru port set
+  # (curated candidates may change between releases of this script, or a
+  # candidate may have been skipped this run due to a new collision). mieru's
+  # own ports are allowed (not denied), so clean up the allow form for any
+  # binding no longer present in the current MIERU_PORTS.
+  if [[ -n "$prev_mieru_ports" ]]; then
+    local stale_mieru_binding stale_mieru_port
+    for stale_mieru_binding in ${prev_mieru_ports//,/ }; do
+      stale_mieru_port="${stale_mieru_binding%%:*}"
+      if [[ ",${MIERU_PORTS:-}," != *",${stale_mieru_binding},"* ]]; then
+        ufw delete allow "${stale_mieru_port}/tcp" || true
+        ufw delete allow "${stale_mieru_port}/udp" || true
+      fi
+    done
   fi
 
   # Remove stale deny rules left over from a previous run with different ports.
@@ -1993,8 +2072,13 @@ configure_ufw() {
   ufw delete deny 443/tcp || true
   ufw allow 443/tcp
   [[ -z "${HYSTERIA_PORT:-}" ]] || ufw allow "${HYSTERIA_PORT}/udp"
-  if [[ -n "${MIERU_PORT:-}" ]]; then
-    ufw allow "${MIERU_PORT}/$(printf '%s' "${MIERU_PROTOCOL:-udp}" | tr '[:upper:]' '[:lower:]')"
+  if [[ -n "${MIERU_PORTS:-}" ]]; then
+    local mieru_ufw_binding mieru_ufw_port mieru_ufw_proto
+    for mieru_ufw_binding in ${MIERU_PORTS//,/ }; do
+      mieru_ufw_port="${mieru_ufw_binding%%:*}"
+      mieru_ufw_proto="$(printf '%s' "${mieru_ufw_binding#*:}" | tr '[:upper:]' '[:lower:]')"
+      ufw allow "${mieru_ufw_port}/${mieru_ufw_proto}"
+    done
   fi
 
   ufw deny 80/tcp || true
@@ -2019,7 +2103,7 @@ STATE_GRPC_PORT=${GRPC_PORT}
 STATE_XHTTP_PORT=${XHTTP_PORT}
 STATE_REALITY_PORT=${REALITY_PORT:-}
 STATE_NAIVE_PORT=${NAIVE_PORT:-}
-STATE_MIERU_PORT=${MIERU_PORT:-}
+STATE_MIERU_PORTS=${MIERU_PORTS:-}
 STATE_NGINX_CDN_PORT=${NGINX_CDN_PORT:-}
 STATE_NGINX_DECOY_PORT=${NGINX_DECOY_PORT:-}
 EOF
@@ -2091,7 +2175,7 @@ print_summary() {
   if [[ -n "$MIERU_SUBDOMAIN" ]]; then
     echo "mieru (direct connection, no CDN, no TLS/SNI):"
     echo "  domain: ${MIERU_SUBDOMAIN}.${BASE_DOMAIN}"
-    echo "  public/client port: ${MIERU_PORT}/${MIERU_PROTOCOL}"
+    echo "  public/client ports: $(format_mieru_ports "$MIERU_PORTS")"
     echo "  username: ${MIERU_USERNAME}"
     echo "  password: ${MIERU_PASSWORD}"
     echo
@@ -2100,7 +2184,7 @@ print_summary() {
   echo "UFW:"
   echo "  allowed: 443/tcp from anywhere (shared by CDN, Reality and NaiveProxy via SNI-based routing); SSH is left untouched by this script"
   echo "  denied: public 80/tcp, ${PANEL_PORT}/tcp, ${SUB_PORT}/tcp, ${WS_PORT}/tcp, ${GRPC_PORT}/tcp, ${XHTTP_PORT}/tcp${REALITY_PORT:+, ${REALITY_PORT}/tcp}${NAIVE_PORT:+, ${NAIVE_PORT}/tcp}"
-  [[ -z "${MIERU_PORT:-}" ]] || echo "  allowed: ${MIERU_PORT}/${MIERU_PROTOCOL} from anywhere (mieru)"
+  [[ -z "${MIERU_PORTS:-}" ]] || echo "  allowed: $(format_mieru_ports "$MIERU_PORTS") from anywhere (mieru)"
   echo
   echo "Files:"
   echo "  Nginx site: ${NGINX_SITE}"
@@ -3213,12 +3297,18 @@ print_client_links() {
     echo
     echo "=== mieru (direct connection, username/password, no TLS/SNI) ==="
     echo "  Server: ${MIERU_SUBDOMAIN}.${BASE_DOMAIN}"
-    echo "  Port:     ${MIERU_PORT}"
-    echo "  Protocol: ${MIERU_PROTOCOL}"
+    echo "  Ports:    $(format_mieru_ports "$MIERU_PORTS")  (pick any one of these to connect)"
     echo "  Username: ${MIERU_USERNAME}"
     echo "  Password: ${MIERU_PASSWORD}"
-    echo "  Client config (mieru client, JSON profile):"
-    echo "    {\"profiles\":[{\"profileName\":\"default\",\"servers\":[{\"ipAddress\":\"${MIERU_SUBDOMAIN}.${BASE_DOMAIN}\",\"portBindings\":[{\"port\":${MIERU_PORT},\"protocol\":\"${MIERU_PROTOCOL}\"}]}],\"user\":{\"name\":\"${MIERU_USERNAME}\",\"password\":\"${MIERU_PASSWORD}\"},\"mtu\":1400}],\"activeProfile\":\"default\"}"
+    echo "  Client config (mieru client, JSON profile -- all ports listed, client picks one):"
+    local mieru_client_binding mieru_client_port mieru_client_proto client_bindings_json=""
+    for mieru_client_binding in ${MIERU_PORTS//,/ }; do
+      mieru_client_port="${mieru_client_binding%%:*}"
+      mieru_client_proto="${mieru_client_binding#*:}"
+      [[ -z "$client_bindings_json" ]] || client_bindings_json+=","
+      client_bindings_json+="{\"port\":${mieru_client_port},\"protocol\":\"${mieru_client_proto}\"}"
+    done
+    echo "    {\"profiles\":[{\"profileName\":\"default\",\"servers\":[{\"ipAddress\":\"${MIERU_SUBDOMAIN}.${BASE_DOMAIN}\",\"portBindings\":[${client_bindings_json}]}],\"user\":{\"name\":\"${MIERU_USERNAME}\",\"password\":\"${MIERU_PASSWORD}\"},\"mtu\":1400}],\"activeProfile\":\"default\"}"
   fi
 }
 
@@ -3239,11 +3329,8 @@ verify_deployment() {
   [[ -z "$REALITY_SUBDOMAIN" ]] || listener_checks+=("Reality:$REALITY_PORT")
   # Hysteria2 is UDP; its listener is verified separately below.
   [[ -z "$NAIVE_SUBDOMAIN" ]] || listener_checks+=("NaiveProxy:$NAIVE_PORT")
-  # mieru may be TCP or UDP; verified separately below since it needs the
-  # protocol-appropriate ss check.
-  if [[ -n "$MIERU_SUBDOMAIN" && "$MIERU_PROTOCOL" == "TCP" ]]; then
-    listener_checks+=("mieru:$MIERU_PORT")
-  fi
+  # mieru's ports are checked separately below (each may be TCP or UDP, and
+  # it listens publicly rather than on loopback like the CDN inbounds).
 
   for check in "${listener_checks[@]}"; do
     local check_name="${check%%:*}"
@@ -3266,13 +3353,26 @@ verify_deployment() {
     fi
   fi
 
-  if [[ -n "$MIERU_SUBDOMAIN" && "$MIERU_PROTOCOL" == "UDP" ]]; then
-    if port_is_udp_listening "$MIERU_PORT"; then
-      echo "  [OK]   mieru is listening on UDP :${MIERU_PORT}"
-    else
-      echo "  [FAIL] mieru is NOT listening on UDP :${MIERU_PORT}"
-      all_ok=false
-    fi
+  if [[ -n "$MIERU_SUBDOMAIN" ]]; then
+    local mieru_check_binding mieru_check_port mieru_check_proto mieru_check_ok
+    for mieru_check_binding in ${MIERU_PORTS//,/ }; do
+      mieru_check_port="${mieru_check_binding%%:*}"
+      mieru_check_proto="${mieru_check_binding#*:}"
+      if [[ "$mieru_check_proto" == "UDP" ]]; then
+        port_is_udp_listening "$mieru_check_port" && mieru_check_ok=true || mieru_check_ok=false
+      else
+        port_is_listening "$mieru_check_port" && mieru_check_ok=true || mieru_check_ok=false
+      fi
+
+      local mieru_check_proto_lc
+      mieru_check_proto_lc="$(printf '%s' "$mieru_check_proto" | tr '[:upper:]' '[:lower:]')"
+      if [[ "$mieru_check_ok" == true ]]; then
+        echo "  [OK]   mieru is listening on ${mieru_check_proto_lc} :${mieru_check_port}"
+      else
+        echo "  [FAIL] mieru is NOT listening on ${mieru_check_proto_lc} :${mieru_check_port}"
+        all_ok=false
+      fi
+    done
   fi
 
   echo
@@ -3407,9 +3507,11 @@ uninstall_all() {
     for p in "${PANEL_PORT:-}" "${SUB_PORT:-}" "${WS_PORT:-}" "${GRPC_PORT:-}" "${XHTTP_PORT:-}" "${REALITY_PORT:-}" "${NAIVE_PORT:-}" "${NGINX_CDN_PORT:-}" "${NGINX_DECOY_PORT:-}"; do
       [[ -n "$p" ]] && ufw delete deny "${p}/tcp" >/dev/null 2>&1 || true
     done
-    if [[ -n "${MIERU_PORT:-}" ]]; then
-      ufw delete allow "${MIERU_PORT}/tcp" >/dev/null 2>&1 || true
-      ufw delete allow "${MIERU_PORT}/udp" >/dev/null 2>&1 || true
+    if [[ -n "${MIERU_PORTS:-}" ]]; then
+      for p in ${MIERU_PORTS//,/ }; do
+        ufw delete allow "${p%%:*}/tcp" >/dev/null 2>&1 || true
+        ufw delete allow "${p%%:*}/udp" >/dev/null 2>&1 || true
+      done
     fi
     ufw reload >/dev/null 2>&1 || true
   fi
