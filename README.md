@@ -216,6 +216,16 @@ for it. Its TCP variant does benefit from OS-level BBR, and `setup.sh`
 already enables it system-wide via `harden-host.sh` (see [Host hardening](#host-hardening)),
 so no separate step is needed either way.
 
+Deliberately out of scope (per
+[server-install.md](https://github.com/enfein/mieru/blob/main/docs/server-install.md)):
+multi-user configs and the user-hint/"block old clients" tuning (this script
+always creates exactly one generated user, so neither applies), `egress`
+proxy chaining to an upstream SOCKS5 hop, and DNS policy overrides -- all
+advanced, optional mita server settings unrelated to a direct single-hop
+deployment. `allowPrivateIP`/`allowLoopbackIP` are left unset for the
+generated user, keeping mita's default (Internet-only proxying) rather than
+opening access to the VPS's own private/loopback ranges.
+
 ### `no-cdn`: NaiveProxy (direct connection)
 
 Available only when `INSTALL_MODE=no-cdn`; it may be used alone or alongside

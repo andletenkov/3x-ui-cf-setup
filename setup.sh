@@ -1336,6 +1336,17 @@ EOF
   mita stop >/dev/null 2>&1 || true
   mita start ||
     die "Failed to start the mieru proxy listener ('mita start'); check 'mita describe config' and 'journalctl -u mita'."
+
+  # `mita start` succeeding only means the command was accepted -- `mita
+  # status` reports the actual proxy state (distinct from `systemctl status
+  # mita`, which only reflects the always-on control daemon process). Per
+  # server-install.md#check-mita-working-status, "RUNNING" is the expected
+  # value once the proxy is actually serving requests.
+  local mieru_status
+  mieru_status="$(mita status 2>&1)" || true
+  if [[ "$mieru_status" != *RUNNING* ]]; then
+    die "mieru (mita) did not report RUNNING after 'mita start'. Output: ${mieru_status}"
+  fi
 }
 
 write_cloudflare_credentials() {
