@@ -210,6 +210,12 @@ own [security guide](https://github.com/enfein/mieru/blob/main/docs/security.md)
 for day-2 operations (`mita get users`, `mita describe config`, log locations,
 BBR/MTU troubleshooting).
 
+On OS-level BBR: mieru's UDP protocol variant (the default here) already
+implements BBR itself, so the project's own `enable_tcp_bbr.py` is a no-op
+for it. Its TCP variant does benefit from OS-level BBR, and `setup.sh`
+already enables it system-wide via `harden-host.sh` (see [Host hardening](#host-hardening)),
+so no separate step is needed either way.
+
 ### `no-cdn`: NaiveProxy (direct connection)
 
 Available only when `INSTALL_MODE=no-cdn`; it may be used alone or alongside

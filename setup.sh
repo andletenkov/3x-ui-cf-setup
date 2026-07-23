@@ -1224,6 +1224,15 @@ MITA_CONFIG_FILE="/etc/mieru/server_config.json"
 # tracks the installed release tag in MITA_VERSION_FILE and skips
 # re-downloading when already current. See:
 # https://github.com/enfein/mieru/blob/main/docs/server-install.md
+#
+# BBR: mieru's own docs (server-install.md#bbr-congestion-control-algorithm)
+# recommend OS-level BBR for the TCP protocol variant -- their UDP variant
+# already implements BBR itself internally, so OS-level BBR is a no-op for
+# it. This script does not duplicate mieru's own enable_tcp_bbr.py: BBR is
+# already enabled system-wide (net.ipv4.tcp_congestion_control=bbr, fq
+# qdisc) by harden-host.sh's enable_bbr(), invoked unconditionally via
+# anonymize_vps() in main() before this function ever runs -- it benefits
+# mieru/TCP the same way it already benefits Xray/WARP.
 install_mieru() {
   [[ -n "$MIERU_SUBDOMAIN" ]] || {
     echo "MIERU_SUBDOMAIN not set, skipping mieru install." >&2
