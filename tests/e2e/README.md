@@ -34,6 +34,15 @@ binary from `klzgrad/forwardproxy`) inside a systemd-booted Docker container,
 and asserts on real observed behavior — actual API responses, actual
 `nginx -t`/`caddy validate` results, actual TLS handshakes.
 
+## Table of contents
+
+- [What it does NOT replace](#what-it-does-not-replace)
+- [What it does NOT cover (yet)](#what-it-does-not-cover-yet)
+- [Running locally](#running-locally)
+- [Adding a new assertion](#adding-a-new-assertion)
+- [Scenarios](#scenarios)
+  - [Known local-only caveat: QEMU emulation on arm64 dev hosts](#known-local-only-caveat-qemu-emulation-on-arm64-dev-hosts)
+
 ## What it does NOT replace
 
 Pure logic (argument parsing, port-collision math, idempotency checks,

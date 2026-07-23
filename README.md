@@ -16,6 +16,29 @@ offers four independent direct-connection transports (Reality, NaiveProxy,
 Hysteria2, mieru) that can be mixed freely with each other, since none of
 them depend on a CDN in front.
 
+## Table of contents
+
+- [What it sets up](#what-it-sets-up)
+- [Scripts](#scripts)
+- [Prerequisites](#prerequisites)
+- [Install](#install)
+  - [Installation modes](#installation-modes)
+  - [Optional fallback page](#optional-fallback-page)
+  - [`cdn`: XHTTP through Cloudflare](#cdn-xhttp-through-cloudflare)
+  - [`cdn`: VLESS Encryption and XTLS-Vision](#cdn-vless-encryption-and-xtls-vision)
+  - [`no-cdn`: Hysteria2](#no-cdn-hysteria2)
+  - [`no-cdn`: VLESS+Reality](#no-cdn-vlessreality)
+  - [`no-cdn`: mieru (direct connection)](#no-cdn-mieru-direct-connection)
+  - [`no-cdn`: NaiveProxy (direct connection)](#no-cdn-naiveproxy-direct-connection)
+- [Configuration reference](#configuration-reference)
+- [Update safely](#update-safely)
+  - [Pin the 3x-ui version](#pin-the-3x-ui-version)
+- [Uninstall](#uninstall)
+- [Host hardening](#host-hardening)
+- [Security model and limitations](#security-model-and-limitations)
+- [Generated files](#generated-files)
+- [Test](#test)
+
 ## What it sets up
 
 ```mermaid

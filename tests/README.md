@@ -5,9 +5,18 @@ Two independent test tiers, kept deliberately separate:
 | Tier | What it runs against | Speed | CI |
 |---|---|---|---|
 | [Bats unit tests](#bats-unit-tests) (`tests/*.bats`) | Hand-written stubs for `curl`, `systemctl`, `nginx`, etc. | Fast, deterministic | Runs on every push/PR |
-| [E2E smoke tests](tests/e2e/README.md) (`tests/e2e/`) | Real installed software (3x-ui, nginx.org packages, Caddy, xray-core, hysteria, mieru) in a real Docker container | Slow, real network/installs | **Manual/local only** -- not run in CI |
+| [E2E smoke tests](e2e/README.md) (`tests/e2e/`) | Real installed software (3x-ui, nginx.org packages, Caddy, xray-core, hysteria, mieru) in a real Docker container | Slow, real network/installs | **Manual/local only** -- not run in CI |
 
 Run both before merging any change that touches `setup.sh` or `harden-host.sh`.
+
+## Table of contents
+
+- [Bats unit tests](#bats-unit-tests)
+  - [Run locally](#run-locally)
+  - [Coverage](#coverage)
+  - [Stubs](#stubs)
+- [E2E smoke tests](#e2e-smoke-tests)
+- [CI](#ci)
 
 ## Bats unit tests
 
